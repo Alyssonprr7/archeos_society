@@ -9,21 +9,39 @@ from app.models.domain import (
 active_games: Dict[str, GameSession] = {}
 
 def start_season_setup(session: GameSession):
-    """Executa o setup inicial da temporada (RF07)"""
+    """Executa o setup inicial da temporada com partição de macacos (RF07)"""
     # 1. Distribui 1 carta para cada jogador
     for player in session.players.values():
         if session.deck:
             player.hand.append(session.deck.pop(0))
-            
+        
     # 2. Popula o mercado com N+2 cartas
     num_players = len(session.players)
     cards_for_market = num_players + 2
-    
     for _ in range(cards_for_market):
         if session.deck:
             session.market.append(session.deck.pop(0))
 
-def create_game(player_ids: List[str], selected_roles: List[str] = None) -> GameSession:
+    # --- NOVA LÓGICA DE PARTIÇÃO (RF07/US07) ---
+    # 3. Divide o baralho restante em duas pilhas semelhantes
+    cartas_restantes = session.deck
+    meio = len(cartas_restantes) // 2
+    pilha_superior = cartas_restantes[:meio]
+    pilha_inferior = cartas_restantes[meio:]
+
+    # 4. Embaralha os 3 macacos apenas na pilha inferior
+    macacos = [Card(role="Macaco", color="Especial", is_monkey=True) for _ in range(3)]
+    pilha_inferior.extend(macacos)
+    random.shuffle(pilha_inferior)
+
+    # 5. Remonta o deck: Superior (limpa) sobre Inferior (com macacos)
+    session.deck = pilha_superior + pilha_inferior
+
+def create_game(
+    player_ids: List[str], 
+    selected_roles: List[str] = None,
+    site_configs: Dict[str, SiteSide] = None 
+) -> GameSession:
     """Valida e inicializa uma nova partida (RF01, RF02, RF03, RF05, RF09)"""
     if not (2 <= len(player_ids) <= 6):
         raise ValueError("A partida deve ter entre 2 e 6 jogadores.")
@@ -42,6 +60,9 @@ def create_game(player_ids: List[str], selected_roles: List[str] = None) -> Game
         max_seasons=max_seasons,
         player_order=player_ids.copy()
     )
+    
+    if site_configs:
+        session.site_configurations.update(site_configs)
     
     colors = ["Vermelho", "Azul", "Verde", "Amarelo", "Roxo", "Preto"]
     for i, pid in enumerate(player_ids):
@@ -66,11 +87,21 @@ def play_expedition(
     player_id: str, 
     cards: List[Card], 
     leader_index: int,
-    target_track: Optional[str] = None  # RF28
+    target_track: Optional[str] = None,
+    choose_to_score: bool = False, # Para Uluru
+    move_extra_vehicle: bool = False, # Para Ta-Sekhet-Ma'at
+    is_final_ur_round: bool = False
 ) -> Expedition:
     """Valida e baixa uma expedição para a mesa (RF21 a RF32)"""
+    
     if not cards:
         raise ValueError("Uma expedição precisa de pelo menos uma carta.")
+        
+    # Nova Restrição: Turno Final de Ur (Ásia B)
+    if is_final_ur_round:
+        limite_ur = session.players[player_id].tracks.get("Ásia", 0) + 1 # Ex: Posição 1 limita a 2 cartas
+        if len(cards) > limite_ur:
+            raise ValueError("Tamanho da expedição excede o limite de Ur.")
         
     if leader_index < 0 or leader_index >= len(cards):
         raise ValueError("Índice do líder inválido.")
@@ -78,15 +109,20 @@ def play_expedition(
     leader = cards[leader_index]
     player = session.players.get(player_id)
     
-    # Validação de integridade da expedição
-    color_match = all(card.color == leader.color for card in cards)
-    role_match = all(card.role == leader.role for card in cards)
+    if not player:
+        raise ValueError("Jogador não encontrado na partida.")
+
+    # RF28 - Restrição do Mercenário
+    if leader.role == "Mercenário":
+        raise ValueError("Um Mercenário não pode ser o líder da expedição.")
+    
+    # Validação de integridade da expedição (Mercenário age como coringa)
+    cartas_normais = [card for card in cards if card.role != "Mercenário"]
+    color_match = all(card.color == leader.color for card in cartas_normais)
+    role_match = all(card.role == leader.role for card in cartas_normais)
     
     if not (color_match or role_match):
         raise ValueError("As cartas não compartilham a mesma cor ou função.")
-        
-    if not player:
-        raise ValueError("Jogador não encontrado na partida.")
         
     # Remoção das cartas da mão
     for played_card in cards:
@@ -96,33 +132,46 @@ def play_expedition(
         else:
             raise ValueError(f"O jogador não possui a carta {played_card.role} ({played_card.color}) na mão.")
 
+    # 1. PROCESSA MOVIMENTAÇÃO (Guia, Piloto, Professor, Estudante)
+    trilha_alvo = target_track if (leader.role in ["Piloto", "Professor"] and target_track) else leader.color
+    avancou = False
     
-    # Define qual trilha será afetada: a escolhida (Professor) ou a da cor do líder
-    trilha_alvo = target_track if leader.role == "Professor" and target_track else leader.color
-    
-    if trilha_alvo != CardColor.SPECIAL.value and trilha_alvo in player.tracks:
+    if leader.role == "Linguista":
+        player.linguist_track += 1
+    elif leader.role != "Estudante" and trilha_alvo in player.tracks:
         posicao_atual = player.tracks[trilha_alvo]
-        tamanho_expedicao = len(cards)
-        
-        # Guia ignora threshold; Professor e outros seguem a regra: tamanho > posição atual
-        if leader.role == "Guia" or tamanho_expedicao > posicao_atual:
+        if leader.role == "Guia" or len(cards) > posicao_atual:
             player.tracks[trilha_alvo] += 1
-            apply_site_effects(session, player_id, trilha_alvo)            
+            avancou = True
 
-
-            
-    # RF30 - Descarte da Mão Restante (Médico é a exceção)
-    if player.hand and leader.role != "Médico":
+    # 2. DESCARTE OBRIGATÓRIO (RF30) - CRÍTICO: Deve vir ANTES dos bônus de compra/sítios
+    # Isso impede que o bônus do Patrono ou Chichén Itzá seja descartado 
+    if player.hand and leader.role not in ["Médico", "Cartógrafo"]:
         session.market.extend(player.hand)
         player.hand.clear()
-        
+
+    # 3. APLICA EFEITOS DE SÍTIO (Agora a mão está limpa para novos bônus)
+    if avancou:
+        apply_site_effects(session, player_id, trilha_alvo, choose_to_score, move_extra_vehicle)
+
+    # 4. HABILIDADE DO PATRONO (RF28)
+    if leader.role == "Patrono":
+        for _ in range(len(cards)):
+            if len(player.hand) < 10 and session.deck:
+                drawn_card = session.deck.pop(0)
+                # Devolve macacos ao deck para não disparar fim de temporada em bônus 
+                if drawn_card.is_monkey: session.deck.insert(0, drawn_card)
+                else: player.hand.append(drawn_card)
+                    
+    # 5. HABILIDADE DO BOTÂNICO, CURADOR E PROFESSOR
+    if leader.role == "Botânico":
+        session.botanist_frame_player_id = player_id
+    elif leader.role == "Curador":
+        player.relics += 1
+    elif leader.role == "Professor":
+        player.professor_tokens.append(min(len(cards), 6))
             
-    expedition = Expedition(
-        cards=cards.copy(),
-        leader=leader,
-        color_matched=color_match
-    )
-    
+    expedition = Expedition(cards=cards.copy(), leader=leader, color_matched=color_match)
     player.expeditions_played.append(expedition)
     return expedition
 
@@ -139,16 +188,105 @@ def validate_player_turn(session: GameSession, player_id: str):
         raise ValueError(f"Não é o turno do jogador {player_id}. Vez de {session.current_turn_player_id}.")
 
 def end_season(session: GameSession) -> dict:
-    """Finaliza a temporada atual e verifica fim de jogo (RF34, RF40)"""
-    session.season += 1
-    session.status = "SEASON_ENDED"
-    session.monkeys_found = 0
+    """Finaliza a temporada e aplica efeitos oficiais (RF34, RF36, RF38)"""
     
-    if session.season > session.max_seasons:
-        session.status = "FINISHED"
-        return {"event": "GAME_END", "message": "Última temporada finalizada. Partida encerrada!"}
+    # 1. PONTUAÇÃO DE EXPEDIÇÕES (Incluindo bônus do Fotógrafo) 
+    for player in session.players.values():
+        for expedition in player.expeditions_played:
+            # RF36: Aplica o tamanho efetivo (considerando +1 do Fotógrafo) 
+            tamanho_pontuavel = get_expedition_effective_size(expedition)
+            player.score += calculate_points(tamanho_pontuavel)
         
-    return {"event": "SEASON_END", "message": "Terceiro macaco revelado! Fim da temporada."}
+        # RF41/Manual: Aplica a pontuação progressiva das Relíquias (Curador) 
+        player.score += calculate_relic_score(player.relics)
+
+    # 2. LINGUISTA: +2 pontos apenas para o líder
+    pos_ling = [p.linguist_track for p in session.players.values()]
+    max_ling = max(pos_ling) if pos_ling else 0
+    if max_ling > 0:
+        for p in session.players.values():
+            if p.linguist_track == max_ling: p.score += 2
+
+    # 3. PROFESSOR: Bônus de avanço e penalidade de recuo
+    somas = {pid: sum(getattr(p, "professor_tokens", [])) for pid, p in session.players.items()}
+    val_somas = list(somas.values())
+    if val_somas:
+        max_prof, min_prof = max(val_somas), min(val_somas)
+        for pid, p in session.players.items():
+            trilha_alvo = max(p.tracks, key=p.tracks.get) if p.tracks else "Europa"
+            if max_prof > 0 and somas[pid] == max_prof: 
+                p.tracks[trilha_alvo] += 1
+            if somas[pid] == min_prof and p.tracks.get(trilha_alvo, 0) > 0: 
+                p.tracks[trilha_alvo] -= 1
+            p.professor_tokens.clear()
+
+    # 4. PONTUAÇÃO DE TRILHAS (Com separação explícita de Lados)
+    for pid, player in session.players.items():
+        for track, pos in player.tracks.items():
+            lado = session.site_configurations.get(track, SiteSide.BASIC)
+            
+            if track == "América do Sul":
+                if lado == SiteSide.BASIC:
+                    player.score += calculate_track_points(track, pos)
+                elif lado == SiteSide.ADVANCED:
+                    pos_extra = player.extra_vehicles.get("América do Sul", 0)
+                    pos_efetiva = min(pos, pos_extra)
+                    player.score += calculate_track_points(track, pos_efetiva)
+                    
+            elif track == "Europa":
+                if lado == SiteSide.BASIC:
+                    player.score += calculate_track_points(track, pos)
+                elif lado == SiteSide.ADVANCED:
+                    ocupantes = [p.tracks["Europa"] for p in session.players.values() if p.tracks["Europa"] == pos]
+                    if len(ocupantes) == 1:
+                        player.score += calculate_track_points(track, pos) + 10 
+                    else:
+                        player.score += calculate_track_points(track, pos) + 5
+                        
+            elif track == "Ásia":
+                # Em Ur, tanto o lado Básico quanto o Avançado ganham pontos pela tabela normalmente.
+                # (A diferença do avançado é o turno extra, resolvido na play_expedition)
+                player.score += calculate_track_points(track, pos)
+                
+            else:
+                # Trata América do Norte, África e Oceania (pontuação base)
+                player.score += calculate_track_points(track, pos)
+
+    # 4.1 RAPA NUI (Oceania - Bônus do Lado Avançado pós-pontuação)
+    if session.site_configurations.get("Oceania") == SiteSide.ADVANCED:
+        pos_oceania = [p.tracks.get("Oceania", 0) for p in session.players.values()]
+        max_oceania = max(pos_oceania) if pos_oceania else 0
+        
+        if max_oceania > 0:
+            for p in session.players.values():
+                if p.tracks.get("Oceania", 0) == max_oceania:
+                    p.score += 3
+                    p.tracks["Oceania"] = 0 # Reset de liderança
+
+    # 4.1 RAPA NUI (Oceania - Lado Avançado)
+    if session.site_configurations.get("Oceania") == SiteSide.ADVANCED:
+        # Encontra a posição máxima
+        pos_oceania = [p.tracks.get("Oceania", 0) for p in session.players.values()]
+        max_oceania = max(pos_oceania) if pos_oceania else 0
+        if max_oceania > 0:
+            for p in session.players.values():
+                if p.tracks.get("Oceania", 0) == max_oceania:
+                    p.score += 3
+                    p.tracks["Oceania"] = 0 # Retorna ao espaço mais à esquerda                   
+
+    # 5. BOTÂNICO: +2 pontos e reset
+    if getattr(session, "botanist_frame_player_id", None):
+        dono = session.players.get(session.botanist_frame_player_id)
+        if dono: dono.score += 2
+        session.botanist_frame_player_id = None
+
+    # 6. RESET DE CARTAS (RF35)
+    reset_cards_for_new_season(session)
+
+    session.season += 1
+    session.status = "FINISHED" if session.season > session.max_seasons else "SEASON_ENDED"
+    session.monkeys_found = 0
+    return {"event": "SEASON_END", "message": "Temporada finalizada."}
 
 def calculate_points(expedition_size: int) -> int:
     """Retorna os pontos baseados no tamanho da expedição (RF38)"""
@@ -302,64 +440,92 @@ def reset_cards_for_new_season(session: GameSession):
     # 3. Embaralha novamente (essencial para a nova temporada)
     random.shuffle(session.deck)    
 
-def apply_site_effects(session: GameSession, player_id: str, track_name: str):
-    """
-    Aplica bônus imediatos ao atingir certas posições nas trilhas (RF33).
-    """
+
+def apply_site_effects(
+    session: GameSession, 
+    player_id: str, 
+    track_name: str, 
+    choose_to_score: bool = False,
+    move_extra_vehicle: bool = False
+):
     player = session.players[player_id]
-    posicao = player.tracks[track_name]
     lado = session.site_configurations.get(track_name)
 
-    # Lado Básico: Apenas mantém o progresso para pontuação final
-    if lado == SiteSide.BASIC:
-        return 
+    if lado == SiteSide.ADVANCED:
+        # --- EUROPA: MESA VERDE (Exemplo de Bônus de Compra ou Avanço Extra) ---
+        if track_name == "Europa":
+            # Se a expedição que causou o avanço for grande (ex: size >= 3), 
+            # o jogador ganha uma carta extra do deck.
+            if session.deck and len(player.hand) < 10:
+                player.hand.append(session.deck.pop(0))
 
-    # Lado Avançado (Lado B): Efeitos Ativos
-    elif lado == SiteSide.ADVANCED:
-        
-        # CHICHÉN ITZÁ: Compra de cartas imediata 
-        if track_name == "América do Norte":
-            # O manual indica que o número de cartas a comprar está ao lado do threshold 
-            # Exemplo: Se cruzou o threshold que indica '2', compra 2 cartas do deck 
-            # Implementação simplificada baseada na posição (mapear conforme o tabuleiro físico):
-            cards_to_draw = {1: 1, 2: 1, 3: 2, 4: 2, 5: 3}.get(posicao, 0)
-            for _ in range(cards_to_draw):
-                if len(player.hand) < 10: # Respeita o limite de mão
-                    draw_card_from_deck(session, player_id)
-
-        # ULURU: Pontuação imediata opcional com reset de veículo 
-        elif track_name == "Ásia":
-            # Nota: Esta parte exigiria uma interação do usuário ou uma política de IA.
-            # Se o jogador optar por pontuar agora:
-            pontos_atuais = calculate_track_points(track_name, posicao)
-            player.score += pontos_atuais
-            player.tracks[track_name] = 0 # Retorna ao espaço mais à esquerda
-
-        # UR: Avanço de veículos (aplica-se se Ur estiver ativo)
+        # --- ÁFRICA: (Exemplo de ganho imediato de pontos ao avançar) ---
         elif track_name == "África":
-            # No avanço de veículos de Ur, você pode escolher 1 veículo para avançar
-            pass # Lógica depende de como você gerencia os 2 veículos de Ta-Sekhet
-
-
-def end_season(session: GameSession) -> dict:
-    """Finaliza a temporada atual e aplica efeitos de fim de temporada (RF34, RF36, RF40)"""
-    
-    # RF36 - Resolver efeitos de papéis e locais antes de fechar a temporada
-    for player in session.players.values():
-        # Exemplo: Efeito do Fotógrafo (ganha pontos por expedições únicas)
-        possui_fotografo = any(
-            e.leader.role == "Fotógrafo" for e in player.expeditions_played
-        )
-        if possui_fotografo:
-            # Lógica simplificada: +2 pontos por ter um Fotógrafo na mesa
             player.score += 2
 
-    session.season += 1
-    session.status = "SEASON_ENDED"
-    session.monkeys_found = 0
-    
-    if session.season > session.max_seasons:
-        session.status = "FINISHED"
-        return {"event": "GAME_END", "message": "Última temporada finalizada. Partida encerrada!"}
+        # --- AMÉRICA DO NORTE: CHICHÉN ITZÁ (Compra ao avançar) ---
+        elif track_name == "América do Norte":
+            if session.deck and len(player.hand) < 10:
+                player.hand.append(session.deck.pop(0))
+
+        # --- OCEANIA: ULURU ---
+        elif track_name == "Oceania" and choose_to_score:
+            pos = player.tracks["Oceania"]
+            player.score += calculate_track_points("Oceania", pos)
+            player.tracks["Oceania"] = 0 # Retorna ao início 
+
+        # --- ÁSIA: TA-SEKHET-MA'AT ---
+        elif track_name == "Ásia":
+            if move_extra_vehicle:
+                player.extra_vehicles["Ásia"] += 1
+            else:
+                player.tracks["Ásia"] += 1
+            # Nota: No fim da temporada, pontua apenas o mais atrasado
+
+def resolve_expedition_turn_end(session: GameSession, player: Player, expedition: Expedition):
+    """
+    Resolve o estado do jogo após uma expedição ser jogada.
+    Verifica se o jogador tem direito a um turno extra (ex: Cartógrafo).
+    Se não tiver, passa o turno.
+    """
+    if expedition.leader.role == "Cartógrafo" and len(player.hand) > 0:
+        # Turno extra concedido. O turno NÃO avança.
+        # No MVP, podemos adicionar uma flag ao jogador ou à sessão se necessário para o frontend,
+        # mas manter o current_turn_player_id é suficiente para a lógica do backend.
+        return
         
-    return {"event": "SEASON_END", "message": "Terceiro macaco revelado! Fim da temporada."}
+    # Se não for Cartógrafo, ou se for mas a mão estiver vazia (sem cartas para jogar), o turno passa.
+    advance_turn(session)    
+
+def get_expedition_effective_size(expedition: Expedition) -> int:
+    """Calcula o tamanho da expedição removendo Mercenários e aplicando bônus do Fotógrafo"""
+    # Remove mercenários da contagem
+    tamanho_base = len([c for c in expedition.cards if c.role != "Mercenário"])
+    
+    # Bônus do Fotógrafo (+1 no tamanho da expedição para pontuação/avanço)
+    if expedition.leader.role == "Fotógrafo":
+        tamanho_base += 1
+        
+    return tamanho_base
+
+def calculate_relic_score(relics: int) -> int:
+    # Tabela progressiva: 1:1, 2:3, 3:6, 4:10, 5:15, 6+:21 
+    table = {0: 0, 1: 1, 2: 3, 3: 6, 4: 10, 5: 15}
+    return table.get(relics, 21 if relics >= 6 else 0)
+
+def prepare_deck_with_monkeys(session: GameSession):
+    # Assume que o deck já tem as cartas normais e já distribuiu mão/mercado
+    cartas_restantes = session.deck
+    random.shuffle(cartas_restantes)
+    
+    meio = len(cartas_restantes) // 2
+    pilha_superior = cartas_restantes[:meio]
+    pilha_inferior = cartas_restantes[meio:]
+    
+    # Criar e adicionar os 3 macacos na pilha inferior
+    macacos = [Card(role="Macaco", color="Especial", is_monkey=True) for _ in range(3)]
+    pilha_inferior.extend(macacos)
+    random.shuffle(pilha_inferior)
+    
+    # Montar o deck final: Superior (limpa) sobre Inferior (com macacos)
+    session.deck = pilha_superior + pilha_inferior    

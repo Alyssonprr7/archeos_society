@@ -20,8 +20,6 @@ TRACK_SCORE_TABLES = {
         5: 15,
         6: 21
     }
-    # Se quiser criar uma trilha com pontuação diferente futuramente:
-    # "Asia": { ... }
 }
 
 class SiteSide(str, Enum):
@@ -57,10 +55,14 @@ class Player(BaseModel):
         "América do Norte": 0, "América do Sul": 0, 
         "Europa": 0, "África": 0, "Ásia": 0, "Oceania": 0
     }
+    linguist_track: int = 0  
+    relics: int = 0
+    professor_tokens: List[int] = []
+    extra_vehicles: Dict[str, int] = {"Ásia": 0}
 
 class GameSession(BaseModel):
     game_id: str
-    status: str = "WAITING_PLAYERS"      # WAITING_PLAYERS, IN_PROGRESS, SEASON_ENDED, FINISHED
+    status: str = "WAITING_PLAYERS"
     players: Dict[str, Player] = {}
     player_order: List[str] = []
     current_turn_index: int = 0
@@ -70,7 +72,7 @@ class GameSession(BaseModel):
     monkeys_found: int = 0               
     season: int = 1                      
     max_seasons: int = 3
-    # RF04 - Configuração de sítios (Trilha: Lado)
+    botanist_frame_player_id: Optional[str] = None
     site_configurations: Dict[str, SiteSide] = {
         "América do Norte": SiteSide.BASIC,
         "América do Sul": SiteSide.BASIC,

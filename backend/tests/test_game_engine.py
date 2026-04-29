@@ -4,20 +4,19 @@ from app.core.game_engine import create_game, play_expedition
 from app.models.domain import Card, CardColor, Expedition, SiteSide
 
 def test_deve_montar_baralho_com_papeis_selecionados():
-    # Arrange: Definindo 6 papéis válidos para a partida
+    # Arrange
     papeis_escolhidos = ["Botânico", "Linguista", "Professor", "Explorador", "Guia", "Médico"]
     
-    # Act: Modificaremos a função create_game para receber esses papéis
-    # Isso vai quebrar imediatamente, pois selected_roles ainda não existe na função!
+    # Act
     session = create_game(["p1", "p2", "p3"], selected_roles=papeis_escolhidos)
     
-    # Assert: Verificações
-    assert len(session.deck) > 0, "O baralho não pode estar vazio"
+    # Assert
+    assert len(session.deck) > 0
     
-    # Extrai os nomes únicos de todos os papéis presentes no baralho gerado
+    # Extrai papéis, removendo o Macaco da verificação, pois ele é um componente fixo de setup
     papeis_no_deck = set(card.role for card in session.deck)
+    papeis_no_deck.discard("Macaco") 
     
-    # Garante que apenas os 6 papéis escolhidos estão lá dentro
     assert papeis_no_deck == set(papeis_escolhidos), "O baralho contém papéis incorretos ou faltantes"
 
 def test_deve_criar_partida_com_3_jogadores():
@@ -430,28 +429,6 @@ def test_deve_aplicar_pontos_do_fotografo_no_fim_da_temporada():
     # O score deve ser maior que o inicial devido ao bônus do Fotógrafo
     assert player.score > pontuacao_inicial, "O bônus de fim de temporada (Fotógrafo) não foi aplicado!"    
 
-def test_deve_aplicar_bonus_de_compra_em_chichen_itza_avancado():
-    # Arrange: Setup do cenário América do Norte Lado B
-    session = create_game(["p1", "p2"])
-    player = session.players["p1"]
-    track = "América do Norte"
-    
-    session.site_configurations[track] = SiteSide.ADVANCED
-    player.tracks[track] = 0
-    player.hand.clear() # Limpa para validar a entrada de novas cartas
-    
-    # Cartas para a expedição (tamanho 2 para avançar do 0 -> 1)
-    cartas_exp = [Card(role="Guia", color=track)] * 2
-    player.hand.extend(cartas_exp)
-    
-    # Act
-    play_expedition(session, "p1", cartas_exp, 0)
-    
-    # Assert
-    assert player.tracks[track] == 1
-    # Verifica se o efeito de compra de Chichén Itzá foi disparado
-    # (Considerando que a posição 1 concede pelo menos 1 carta)
-    assert len(player.hand) > 0 
 
 def test_deve_permitir_reset_de_trilha_em_uluru_ao_pontuar_imediatamente():
     # Arrange: Setup do cenário Ásia Lado B
@@ -476,3 +453,366 @@ def test_deve_permitir_reset_de_trilha_em_uluru_ao_pontuar_imediatamente():
         assert player.tracks[track] == 0 # Voltou ao início
     else:
         assert player.tracks[track] == 3 # Apenas avançou sem resetar    
+
+def test_deve_aplicar_bonus_de_compra_em_chichen_itza_avancado():
+    # Arrange
+    session = create_game(["p1", "p2"])
+    player = session.players["p1"]
+    track = "América do Norte"
+    
+    # GARANTIA: Insere uma carta válida no topo do deck para evitar deck vazio ou macacos
+    session.deck.insert(0, Card(role="Explorador", color="Europa", is_monkey=False))
+    
+    session.site_configurations[track] = SiteSide.ADVANCED
+    player.tracks[track] = 0
+    player.hand.clear() 
+    
+    cartas_exp = [Card(role="Guia", color=track)] * 2
+    player.hand.extend(cartas_exp)
+   
+    # Act
+    play_expedition(session, "p1", cartas_exp, 0)
+    
+    # Assert
+    assert player.tracks[track] == 1 
+    assert len(player.hand) > 0, "O bônus de compra de Chichén Itzá não funcionou"
+
+
+# Em tests/test_game_engine.py
+
+def test_mercenario_nao_pode_ser_lider():
+    session = create_game(["p1", "p2"])
+    cartas = [Card(role="Mercenário", color="América do Norte")]
+    session.players["p1"].hand.extend(cartas)
+    
+    with pytest.raises(ValueError, match="Um Mercenário não pode ser o líder"):
+        play_expedition(session, "p1", cartas, 0)
+
+def test_mercenario_funciona_como_coringa():
+    session = create_game(["p1", "p2"])
+    cartas = [
+        Card(role="Guia", color="Europa"),
+        Card(role="Mercenário", color="Especial") # Coringa
+    ]
+    session.players["p1"].hand.extend(cartas)
+    
+    # O Guia é o líder (índice 0). A expedição deve ser aceita.
+    exp = play_expedition(session, "p1", cartas, 0) 
+    assert len(exp.cards) == 2
+
+def test_estudante_nunca_avanca_trilha():
+    session = create_game(["p1", "p2"])
+    # Coloca o veículo na posição 0
+    session.players["p1"].tracks["Europa"] = 0
+    
+    # 3 cartas é mais que a posição atual (0), normalmente avançaria
+    cartas = [Card(role="Estudante", color="Europa")] * 3
+    session.players["p1"].hand.extend(cartas)
+    
+    play_expedition(session, "p1", cartas, 0)
+    
+    # Assertiva: Continua no 0!
+    assert session.players["p1"].tracks["Europa"] == 0
+
+def test_patrono_compra_cartas_apos_descartar():
+    session = create_game(["p1", "p2"])
+    player = session.players["p1"]
+    
+    # Adicionamos +1 Patrono (ou Mercenário) para que a expedição tenha tamanho 2
+    cartas_exp = [
+        Card(role="Patrono", color="Europa"),
+        Card(role="Patrono", color="Europa") # Agora o tamanho é 2
+    ]
+    cartas_sobra = [Card(role="Guia", color="África")]
+    player.hand.extend(cartas_exp + cartas_sobra)
+    
+    session.deck.insert(0, Card(role="Botânico", color="Ásia"))
+    session.deck.insert(1, Card(role="Explorador", color="Oceania"))
+    
+    play_expedition(session, "p1", cartas_exp, 0)
+    
+    # Agora a assertiva de comprar 2 cartas será verdadeira
+    assert len(player.hand) == 2, "O Patrono deveria ter comprado 2 cartas novas!"
+    assert cartas_sobra[0] not in player.hand
+
+def test_cartografo_concede_turno_extra():
+    session = create_game(["p1", "p2"])
+    player = session.players["p1"]
+    
+    # Forçamos p1 como o jogador do turno atual
+    session.current_turn_player_id = "p1"
+    
+    # Prepara a mão: O Cartógrafo vai liderar. 
+    # Para simplificar o teste, vamos apenas checar se a flag de "turno_extra"
+    # é retornada pela função play_expedition (ou se o turno não avança).
+    cartas_exp = [Card(role="Cartógrafo", color="Europa")]
+    player.hand.extend(cartas_exp)
+    
+    # Act
+    exp = play_expedition(session, "p1", cartas_exp, 0)
+    
+    # Precisaremos de uma função que processe o "Fim do Turno de Expedição".
+    # Como a play_expedition atualmente não passa o turno automaticamente,
+    # vamos criar um método dedicado para isso, e testar se o Cartógrafo impede
+    # esse avanço.
+    
+    from app.core.game_engine import resolve_expedition_turn_end
+    # resolve_expedition_turn_end verificará se o líder foi um Cartógrafo
+    resolve_expedition_turn_end(session, player, exp)
+    
+    # Assert
+    # Se o líder foi o Cartógrafo, o turno AINDA deve ser do jogador p1
+    assert session.current_turn_player_id == "p1", "O Cartógrafo deveria ter mantido o turno com p1 para a nova expedição!"
+
+def test_botanico_transfere_controle_da_moldura():
+    session = create_game(["p1", "p2"])
+    player = session.players["p1"]
+    
+    # Prepara a mão com um Botânico líder
+    cartas_exp = [Card(role="Botânico", color="Europa")]
+    player.hand.extend(cartas_exp)
+    
+    # Act
+    play_expedition(session, "p1", cartas_exp, 0)
+    
+    # Assert
+    # O teste vai quebrar aqui, pois a engine ainda não sabe o que é a "moldura"
+    # nem faz a transferência desse controle.
+    dono_da_moldura = getattr(session, "botanist_frame_player_id", None)
+    assert dono_da_moldura == "p1", "O jogador p1 deveria ter roubado o controle da moldura do Botânico!"    
+
+def test_linguista_avanca_trilha_especial():
+    session = create_game(["p1", "p2"])
+    player = session.players["p1"]
+    
+    # Prepara a expedição com Linguista
+    cartas_exp = [Card(role="Linguista", color="Europa")]
+    player.hand.extend(cartas_exp)
+    
+    # Act
+    play_expedition(session, "p1", cartas_exp, 0)
+    
+    # Assert
+    assert player.tracks["Europa"] == 0, "O Linguista não deveria avançar na trilha do mapa!"
+    assert getattr(player, "linguist_track", 0) == 1, "O veículo deveria ter avançado na trilha do Linguista!"
+
+def test_curador_coleta_reliquia():
+    session = create_game(["p1", "p2"])
+    player = session.players["p1"]
+    
+    # Prepara a expedição com Curador
+    cartas_exp = [Card(role="Curador", color="África")]
+    player.hand.extend(cartas_exp)
+    
+    # Act
+    play_expedition(session, "p1", cartas_exp, 0)
+    
+    # Assert
+    assert getattr(player, "relics", 0) == 1, "O jogador deveria ter coletado 1 relíquia!"    
+
+def test_professor_coleta_ficha():
+    session = create_game(["p1", "p2"])
+    player = session.players["p1"]
+    
+    # Prepara a expedição liderada por um Professor
+    cartas_exp = [Card(role="Professor", color="Europa")]
+    player.hand.extend(cartas_exp)
+    
+    # Act
+    play_expedition(session, "p1", cartas_exp, 0)
+    
+    # Assert
+    # Agora professor_tokens é uma lista com os valores das fichas coletadas
+    fichas_coletadas = getattr(player, "professor_tokens", [])
+    assert len(fichas_coletadas) == 1, "O jogador deveria ter coletado 1 ficha de Professor!"
+    assert fichas_coletadas[0] == 1, "A ficha coletada deveria ter o valor 1 (tamanho da expedição)!"
+
+
+def test_fim_temporada_pontua_botanico():
+    session = create_game(["p1", "p2"])
+    
+    # Entrega a moldura para o p1 e zera o placar
+    session.botanist_frame_player_id = "p1"
+    session.players["p1"].score = 0
+    
+    from app.core.game_engine import end_season
+    end_season(session)
+    
+    # Regra Oficial: 2 pontos e a moldura volta para o centro
+    assert session.players["p1"].score == 2, "O dono da moldura deveria ter ganho 2 pontos pelas regras oficiais!"
+    assert getattr(session, "botanist_frame_player_id", None) is None, "A moldura deveria ter sido devolvida ao centro da mesa!"
+
+def test_fim_temporada_pontua_linguista():
+    session = create_game(["p1", "p2"])
+    
+    # p1 está mais avançado (posição 3) que p2 (posição 1)
+    session.players["p1"].linguist_track = 3
+    session.players["p2"].linguist_track = 1
+    
+    session.players["p1"].score = 0
+    session.players["p2"].score = 0
+    
+    from app.core.game_engine import end_season
+    end_season(session)
+    
+    # Regra Oficial: Apenas quem está mais avançado ganha 2 pontos fixos
+    assert session.players["p1"].score == 2, "Apenas o jogador mais avançado no Linguista ganha 2 pontos!"
+    assert session.players["p2"].score == 0, "O jogador atrasado não deveria ganhar pontos de Linguista!"
+
+def test_fim_temporada_pontua_professor():
+    session = create_game(["p1", "p2", "p3"])
+    
+    # p1 tem fichas que somam 8 (maior)
+    session.players["p1"].professor_tokens = [5, 3]
+    # p2 tem fichas que somam 4 (médio)
+    session.players["p2"].professor_tokens = [4]
+    # p3 tem fichas que somam 2 (menor)
+    session.players["p3"].professor_tokens = [2]
+    
+    # Coloca todos na casa 2 da trilha Europa para testar o avanço/recuo
+    for p in session.players.values():
+        p.tracks["Europa"] = 2
+        
+    from app.core.game_engine import end_season
+    end_season(session)
+    
+    # Regra Oficial: Maior soma avança 1 casa, menor soma recua 1 casa na trilha
+    assert session.players["p1"].tracks["Europa"] == 3, "Quem tem a maior soma de fichas avança 1 espaço!"
+    assert session.players["p2"].tracks["Europa"] == 2, "Quem tem a soma intermediária não avança nem recua!"
+    assert session.players["p3"].tracks["Europa"] == 1, "Quem tem a menor soma de fichas recua 1 espaço!"
+    
+    # Regra Oficial: Fichas devem ser descartadas
+    assert len(session.players["p1"].professor_tokens) == 0, "As fichas devem ser descartadas após a pontuação!"
+
+def test_deve_permitir_reset_de_trilha_em_uluru_ao_pontuar_imediatamente():
+    # Arrange: 2 jogadores para passar na validação RF01
+    session = create_game(["p1", "p2"]) 
+    session.site_configurations["Oceania"] = SiteSide.ADVANCED
+    player = session.players["p1"]
+    
+    # Simula veículo na posição 2 da Oceania (3 pontos conforme tabela)
+    player.tracks["Oceania"] = 2
+    
+    # Act: Passamos o novo argumento opcional 'choose_to_score'
+    from app.core.game_engine import apply_site_effects
+    apply_site_effects(session, "p1", "Oceania", choose_to_score=True)
+    
+    # Assert
+    assert player.score == 3, "O jogador deveria ter ganho 3 pontos imediatamente!"
+    assert player.tracks["Oceania"] == 0, "O veículo deveria ter voltado ao início em Uluru!"
+
+def test_uluru_avancado_permite_reset_e_pontuacao_imediata():
+    session = create_game(["p1", "p2"])
+    session.site_configurations["Oceania"] = SiteSide.ADVANCED
+    player = session.players["p1"]
+    
+    player.tracks["Oceania"] = 3 # Supondo que posição 3 vale 6 pontos
+    
+    from app.core.game_engine import apply_site_effects
+    apply_site_effects(session, "p1", "Oceania", choose_to_score=True)
+    
+    assert player.score == 6
+    assert player.tracks["Oceania"] == 0    
+
+
+def test_setup_avancado_deve_inicializar_componentes_de_especialistas():
+    # Arrange
+    player_ids = ["p1", "p2"]
+    roles = ["Curador", "Linguista", "Professor", "Botânico", "Guia", "Médico"]
+    
+    # Act
+    session = create_game(player_ids, selected_roles=roles)
+    
+    # Assert (RF06)
+    for pid in player_ids:
+        player = session.players[pid]
+        # Valida Linguista: Veículo deve estar na posição inicial da trilha especial
+        assert player.linguist_track == 0 
+        
+        # Valida Curador: Jogador deve estar pronto para receber relíquias
+        # (Nesta implementação, relics inicia em 0, mas o sistema deve suportar o incremento)
+        assert player.relics == 0
+        
+        # Valida Professor: Lista de fichas deve iniciar vazia
+        assert len(player.professor_tokens) == 0
+
+def test_deve_impedir_compra_quando_limite_de_10_cartas_for_atingido():
+    # Arrange
+    session = create_game(["p1", "p2"])
+    player = session.players["p1"]
+    
+    # Enche a mão do jogador com 10 cartas
+    player.hand = [Card(role="Guia", color="Europa")] * 10
+    
+    # Act & Assert (RF16/US11)
+    # Tenta comprar do mercado
+    with pytest.raises(ValueError, match="Limite de 10 cartas atingido"):
+        from app.core.game_engine import draw_from_market
+        draw_from_market(session, player_id="p1", market_index=0)
+        
+    # Tenta comprar do deck
+    with pytest.raises(ValueError, match="Limite de 10 cartas atingido"):
+        from app.core.game_engine import draw_card_from_deck
+        draw_card_from_deck(session, player_id="p1")        
+
+def test_deve_executar_fluxo_de_draft_de_papeis():
+    # Arrange
+    player_ids = ["p1", "p2", "p3"]
+    # Simulamos uma lista de papéis disponíveis no sistema
+    pool_total = ["Botânico", "Linguista", "Professor", "Guia", "Médico", "Cartógrafo", "Patrono", "Fotógrafo"]
+    
+    # Act
+    # 1. p1 recebe 6 papéis do pool
+    mao_draft = pool_total[:6]
+    escolha_p1 = mao_draft.pop(0) # p1 escolhe Botânico
+    
+    # 2. p2 recebe as 5 de p1 + 1 nova do pool
+    mao_draft.append(pool_total[6]) # p2 adiciona Patrono
+    escolha_p2 = mao_draft.pop(0) # p2 escolhe Linguista
+    
+    # ... repete até 6 escolhas ...
+    papeis_escolhidos = [escolha_p1, escolha_p2, "Professor", "Guia", "Médico", "Patrono"]
+    
+    session = create_game(player_ids, selected_roles=papeis_escolhidos)
+    
+    # Assert
+    papeis_no_deck = set(card.role for card in session.deck)
+    papeis_no_deck.discard("Macaco")
+    assert papeis_no_deck == set(papeis_escolhidos)
+
+def test_tantallon_deve_pontuar_estrela_grande_se_estiver_sozinho():
+    # Arrange
+    session = create_game(["p1", "p2"])
+    session.site_configurations["Europa"] = SiteSide.ADVANCED # Tantallon
+    
+    # p1 está sozinho na posição 3 (Ex: Estrela Grande = 10, Pequena = 5)
+    session.players["p1"].tracks["Europa"] = 3
+    # p2 está em uma posição diferente
+    session.players["p2"].tracks["Europa"] = 1
+    
+    # Act
+    from app.core.game_engine import end_season
+    end_season(session)
+    
+    # Assert
+    # p1 deve ter recebido o bônus da estrela grande
+    assert session.players["p1"].score >= 10
+
+def test_ta_sekhet_maat_deve_pontuar_apenas_veiculo_mais_atrasado():
+    # Arrange
+    session = create_game(["p1", "p2"])
+    session.site_configurations["América do Sul"] = SiteSide.ADVANCED
+    p1 = session.players["p1"]
+    
+    # Veículo A na posição 4, Veículo B (extra) na posição 2
+    p1.tracks["América do Sul"] = 4
+    p1.extra_vehicles["América do Sul"] = 2
+    
+    # Act
+    from app.core.game_engine import end_season
+    end_season(session)
+    
+    # Assert
+    # Deve pontuar pela posição 2 (veículo atrasado), não pela 4. 
+    # Se posição 2 vale 3 pontos, o score deve refletir isso.
+    assert p1.score == 3    

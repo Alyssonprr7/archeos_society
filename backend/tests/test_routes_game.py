@@ -46,3 +46,8 @@ def test_endpoint_criar_partida_com_papeis_customizados():
     assert len(estado_jogo["deck"]) > 0
     papel_primeira_carta = estado_jogo["deck"][0]["role"]
     assert papel_primeira_carta in payload["selected_roles"]    
+
+def test_endpoint_criar_partida_erro_limite():
+    response = client.post("/game/create", json={"player_ids": ["apenas_um"]})
+    # O FastAPI com Pydantic retorna 422 Unprocessable Entity quando os validadores do Field falham
+    assert response.status_code == 422    
