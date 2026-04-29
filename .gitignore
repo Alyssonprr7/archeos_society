@@ -21,7 +21,7 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-# Ambientes Virtuais (Venv) [cite: 7, 52]
+# Ambientes Virtuais (Venv)
 venv/
 .venv/
 env/
@@ -52,3 +52,4 @@ coverage.xml
 # Arquivos de Sistema
 .DS_Store
 Thumbs.db
+archeos.db

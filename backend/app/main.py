@@ -2,6 +2,9 @@ from fastapi import FastAPI
 from app.api.routes_game import router as game_router
 from app.api.routes_turn import router as turn_router
 
+from app.db.database import engine, Base
+Base.metadata.create_all(bind=engine)
+
 app = FastAPI(
     title="Archeos Society Engine",
     description="Backend API para gerenciamento do jogo de tabuleiro Archeos Society",

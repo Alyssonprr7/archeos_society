@@ -816,3 +816,40 @@ def test_ta_sekhet_maat_deve_pontuar_apenas_veiculo_mais_atrasado():
     # Deve pontuar pela posição 2 (veículo atrasado), não pela 4. 
     # Se posição 2 vale 3 pontos, o score deve refletir isso.
     assert p1.score == 3    
+
+def test_deve_finalizar_jogo_apos_limite_de_temporadas():
+    # Arrange: 2 jogadores (limite de 2 temporadas)
+    session = create_game(["p1", "p2"]) 
+    session.season = 2  # Estamos na última temporada 
+    session.monkeys_found = 2
+    
+    # Criamos o 3º macaco para disparar o fim
+    monkey_card = Card(role="Nenhum", color="Especial", is_monkey=True)
+    
+    # Act
+    from app.core.game_engine import check_monkey_condition
+    check_monkey_condition(session, monkey_card)
+    
+    # Assert
+    assert session.status == "FINISHED"
+    assert session.season == 2 # Não deve avançar para 3    
+
+def test_deve_transitar_entre_temporadas_ate_fim_do_jogo():
+    # 2 jogadores = 2 temporadas
+    session = create_game(["p1", "p2"])
+    
+    # Simula fim da Temporada 1
+    session.monkeys_found = 3
+    from app.core.game_engine import end_season
+    end_season(session)
+    
+    # Verifica se resetou e avançou
+    assert session.season == 2
+    assert session.status == "SEASON_ENDED" # Ou PLAYING se seu reset for auto
+    
+    # Simula fim da Temporada 2
+    session.monkeys_found = 3
+    end_season(session)
+    
+    # Agora deve finalizar
+    assert session.status == "FINISHED"

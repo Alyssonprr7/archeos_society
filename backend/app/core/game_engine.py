@@ -58,7 +58,9 @@ def create_game(
     session = GameSession(
         game_id=game_id,
         max_seasons=max_seasons,
-        player_order=player_ids.copy()
+        player_order=player_ids.copy(),
+        current_turn_player_id=player_ids[0],
+        status="PLAYING"
     )
     
     if site_configs:
@@ -283,10 +285,19 @@ def end_season(session: GameSession) -> dict:
     # 6. RESET DE CARTAS (RF35)
     reset_cards_for_new_season(session)
 
-    session.season += 1
-    session.status = "FINISHED" if session.season > session.max_seasons else "SEASON_ENDED"
-    session.monkeys_found = 0
-    return {"event": "SEASON_END", "message": "Temporada finalizada."}
+    if session.season >= session.max_seasons:
+        session.status = "FINISHED"
+        return {"event": "GAME_FINISHED", "message": "Jogo encerrado."}
+    else:
+        # Prepara a próxima temporada
+        session.season += 1
+        session.monkeys_found = 0
+        
+        # O setup inicial é feito, mas o status deve sinalizar o fim da temporada anterior
+        start_season_setup(session)
+        session.status = "SEASON_ENDED" # <--- Mantenha como SEASON_ENDED
+        
+        return {"event": "SEASON_END", "message": "Nova temporada iniciada."}
 
 def calculate_points(expedition_size: int) -> int:
     """Retorna os pontos baseados no tamanho da expedição (RF38)"""
@@ -357,10 +368,12 @@ def draw_card_from_deck(session: GameSession, player_id: str) -> Optional[Card]:
     # Se for macaco, processamos a regra especial (RF17-20)
     monkey_check = check_monkey_condition(session, drawn_card)
     if monkey_check:
+        # Se a temporada ACABOU, interrompemos o fluxo e não avançamos o turno
+        if session.status in ["SEASON_ENDED", "FINISHED"]:
+            return drawn_card # Retorna o macaco para sinalizar o fim na API
+            
         # Se achou macaco mas a temporada NÃO acabou, o jogador tenta comprar de novo (RF19)
-        if monkey_check["event"] != "SEASON_END":
-             return draw_card_from_deck(session, player_id)
-        return drawn_card # Retorna para sinalizar o fim da temporada
+        return draw_card_from_deck(session, player_id)
 
     player.hand.append(drawn_card)
 
