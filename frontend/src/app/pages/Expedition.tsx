@@ -2,292 +2,143 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router';
 import { Button } from '../components/ui/button';
 import { GameCard } from '../components/GameCard';
-import { Player, GameCard as GameCardType } from '../types';
+import { GameCard as GameCardType } from '../types';
 import { motion } from 'motion/react';
-import { ArrowLeft, CheckCircle, Crown, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Crown, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Toaster } from '../components/ui/sonner';
+import { gameApi } from '../../api/game';
 
 export default function Expedition() {
   const navigate = useNavigate();
   const location = useLocation();
-  const {
-    players: initialPlayers,
-    currentPlayerIndex,
-    selectedCards: initialSelectedCards,
-    season,
-    market: initialMarket,
-    revealedMonkeys,
-    turnCount
-  } = location.state || {};
-
-  // Redirect if no state data
-  useEffect(() => {
-    if (!initialPlayers || !initialSelectedCards) {
-      navigate('/');
-    }
-  }, [initialPlayers, initialSelectedCards, navigate]);
-
-  const [players] = useState<Player[]>(initialPlayers || []);
-  const [market] = useState<GameCardType[]>(initialMarket || []);
-  const currentPlayer = players[currentPlayerIndex];
-  
-  // Guard clause
-  if (!currentPlayer || !initialSelectedCards) {
-    return null;
+  const state = (location.state ?? {}) as {
+    gameId?: string
+    playerId?: string
+    selectedIndices?: number[]
+    selectedCards?: GameCardType[]
   }
-  
-  const selectedCardObjects = currentPlayer.cards.filter(
-    card => initialSelectedCards.includes(card.id)
-  );
-  
-  const [leader, setLeader] = useState<GameCardType | null>(null);
-  const [validationError, setValidationError] = useState<string>('');
+  const { gameId, playerId, selectedIndices, selectedCards } = state
 
-  const validateExpedition = (): boolean => {
-    if (!leader) {
-      setValidationError('Selecione uma carta líder!');
-      return false;
+  const [leaderPos, setLeaderPos] = useState<number | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!gameId || !playerId || !selectedCards?.length) navigate('/')
+  }, [gameId, playerId, selectedCards, navigate])
+
+  if (!gameId || !playerId || !selectedCards?.length) return null
+
+  const leaderCard = leaderPos !== null ? selectedCards[leaderPos] : null
+
+  const isValidMember = (card: GameCardType) => {
+    if (!leaderCard || card === leaderCard) return true
+    return card.region === leaderCard.region || card.role === leaderCard.role
+  }
+
+  const allValid = leaderPos !== null && selectedCards.every((c: GameCardType, i: number) =>
+    i === leaderPos || isValidMember(c)
+  )
+
+  const submitExpedition = async () => {
+    if (leaderPos === null) { toast.error('Escolha o líder da expedição!'); return }
+    if (!allValid) { toast.error('Algumas cartas não são compatíveis com o líder!'); return }
+
+    setLoading(true)
+    try {
+      await gameApi.playExpedition(gameId, {
+        player_id: playerId,
+        card_indices: selectedIndices ?? [],
+        leader_index: leaderPos,
+      })
+      toast.success('Expedição realizada!')
+      navigate('/game', { state: { gameCode: gameId } })
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail ?? 'Erro ao jogar expedição')
+    } finally {
+      setLoading(false)
     }
-
-    if (selectedCardObjects.length < 2) {
-      setValidationError('Expedição precisa de pelo menos 2 cartas!');
-      return false;
-    }
-
-    // Check if all cards have same color OR same function
-    const allSameColor = selectedCardObjects.every(card => card.color === leader.color);
-    const allSameFunction = selectedCardObjects.every(card => card.function === leader.function);
-
-    if (!allSameColor && !allSameFunction) {
-      setValidationError('Todas as cartas devem ter a mesma cor OU a mesma função!');
-      return false;
-    }
-
-    setValidationError('');
-    return true;
-  };
-
-  const confirmExpedition = () => {
-    if (!validateExpedition()) {
-      toast.error(validationError);
-      return;
-    }
-
-    // Calculate points
-    const points = selectedCardObjects.reduce((sum, card) => sum + card.value, 0);
-    const bonus = leader ? Math.floor(leader.value * 1.5) : 0;
-    const totalPoints = points + bonus;
-
-    // Update player
-    const updatedPlayers = [...players];
-    updatedPlayers[currentPlayerIndex].score += totalPoints;
-    updatedPlayers[currentPlayerIndex].position = Math.min(
-      updatedPlayers[currentPlayerIndex].position + 1,
-      10
-    );
-
-    // Get remaining cards from hand that were NOT selected for the expedition
-    // These cards should be available to other players
-    const cardsNotUsedInExpedition = updatedPlayers[currentPlayerIndex].cards.filter(
-      card => !initialSelectedCards.includes(card.id)
-    );
-
-    // Remove ALL cards from player's hand (both selected and not selected)
-    // Cards used in expedition are discarded
-    // Cards not used go to the market
-    updatedPlayers[currentPlayerIndex].cards = [];
-
-    // Add cards that were not used in expedition to market for other players
-    const updatedMarket = [...market, ...cardsNotUsedInExpedition];
-
-    // Move to next player
-    const nextPlayerIndex = (currentPlayerIndex + 1) % updatedPlayers.length;
-
-    toast.success(`Expedição concluída! +${totalPoints} pontos`);
-
-    setTimeout(() => {
-      navigate('/game', {
-        state: {
-          players: updatedPlayers,
-          season,
-          market: updatedMarket,
-          currentPlayerIndex: nextPlayerIndex,
-          revealedMonkeys,
-          turnCount: turnCount + 1
-        }
-      });
-    }, 1000);
-  };
-
-  const cancel = () => {
-    navigate('/game', {
-      state: {
-        players,
-        season,
-        market,
-        currentPlayerIndex,
-        revealedMonkeys,
-        turnCount
-      }
-    });
-  };
-
-  const selectLeader = (card: GameCardType) => {
-    setLeader(card);
-    setValidationError('');
-  };
-
-  // Check validation in real-time
-  const getValidationStatus = () => {
-    if (!leader) return { valid: false, message: 'Selecione uma carta líder' };
-    
-    const allSameColor = selectedCardObjects.every(card => card.color === leader.color);
-    const allSameFunction = selectedCardObjects.every(card => card.function === leader.function);
-
-    if (allSameColor) {
-      return { valid: true, message: `✓ Todas as cartas são da cor ${leader.color}` };
-    }
-    if (allSameFunction) {
-      return { valid: true, message: `✓ Todas as cartas têm a função ${leader.function}` };
-    }
-    
-    return { valid: false, message: '✗ Cartas devem ter mesma cor OU mesma função' };
-  };
-
-  const validation = getValidationStatus();
-  const totalPoints = selectedCardObjects.reduce((sum, card) => sum + card.value, 0);
-  const leaderBonus = leader ? Math.floor(leader.value * 1.5) : 0;
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4 overflow-y-auto">
       <Toaster position="top-center" />
-      
-      <div className="max-w-4xl mx-auto py-8">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-        >
-          {/* Header */}
-          <div className="mb-8">
-            <Button
-              variant="ghost"
-              onClick={cancel}
-              className="mb-4 text-slate-400 hover:text-white"
-            >
-              <ArrowLeft className="w-4 h-4 mr-2" />
-              Voltar
-            </Button>
-            
-            <h1 className="text-3xl md:text-5xl font-bold text-white mb-2">
-              Iniciar Expedição
-            </h1>
-            <p className="text-slate-400">
-              Escolha a carta líder e valide sua expedição
-            </p>
-          </div>
-
-          {/* Current Player */}
-          <div 
-            className="bg-slate-800/50 backdrop-blur-xl rounded-lg p-4 mb-6 flex items-center gap-3"
+      <div className="max-w-3xl mx-auto py-8">
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+          <button
+            onClick={() => navigate(-1)}
+            className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-1"
           >
-            <div 
-              className="w-12 h-12 rounded-full flex-shrink-0"
-              style={{ backgroundColor: currentPlayer.color }}
-            />
-            <div>
-              <div className="text-sm text-slate-400">Jogador</div>
-              <div className="text-xl font-bold text-white">{currentPlayer.name}</div>
-            </div>
-          </div>
+            <ArrowLeft className="w-4 h-4" /> Voltar
+          </button>
 
-          {/* Leader Selection */}
+          <h1 className="text-3xl md:text-4xl font-bold text-white mb-2">Expedição</h1>
+          <p className="text-slate-400 mb-8">
+            Clique em uma carta para torná-la líder. As demais devem compartilhar região ou papel com o líder.
+          </p>
+
           <div className="mb-8">
             <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
-              <Crown className="w-6 h-6 text-amber-500" />
-              Selecione a Carta Líder
+              <Crown className="w-5 h-5 text-amber-400" />
+              Cartas Selecionadas
             </h2>
-            
-            <div className="flex gap-3 overflow-x-auto pb-4">
-              {selectedCardObjects.map((card) => (
-                <div key={card.id} onClick={() => selectLeader(card)}>
-                  <GameCard 
-                    card={card}
-                    selected={leader?.id === card.id}
-                  />
-                </div>
-              ))}
+            <div className="flex flex-wrap gap-4">
+              {selectedCards.map((card: GameCardType, idx: number) => {
+                const isLeader = leaderPos === idx
+                const valid = leaderPos === null || idx === leaderPos || isValidMember(card)
+                return (
+                  <motion.div
+                    key={card.id}
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => setLeaderPos(idx)}
+                    className={`relative cursor-pointer rounded-xl ring-2 transition-all ${
+                      isLeader
+                        ? 'ring-amber-400 shadow-lg shadow-amber-500/30'
+                        : valid
+                        ? 'ring-transparent hover:ring-slate-500'
+                        : 'ring-red-500 opacity-60'
+                    }`}
+                  >
+                    <GameCard card={card} />
+                    {isLeader && (
+                      <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-amber-500 rounded-full px-2 py-0.5 text-xs font-bold text-white flex items-center gap-1 whitespace-nowrap">
+                        <Crown className="w-3 h-3" /> Líder
+                      </div>
+                    )}
+                    {leaderPos !== null && !valid && (
+                      <div className="absolute inset-0 bg-red-900/40 rounded-xl flex items-center justify-center">
+                        <span className="text-red-400 text-xs font-bold">Incompatível</span>
+                      </div>
+                    )}
+                  </motion.div>
+                )
+              })}
             </div>
           </div>
 
-          {/* Validation Status */}
-          <div className={`
-            rounded-lg p-4 mb-6 flex items-start gap-3
-            ${validation.valid 
-              ? 'bg-green-500/20 border border-green-500' 
-              : 'bg-amber-500/20 border border-amber-500'
-            }
-          `}>
-            {validation.valid ? (
-              <CheckCircle className="w-6 h-6 text-green-400 flex-shrink-0 mt-0.5" />
-            ) : (
-              <AlertTriangle className="w-6 h-6 text-amber-400 flex-shrink-0 mt-0.5" />
-            )}
-            <div className="flex-1">
-              <h3 className="font-bold text-white mb-1">Validação da Expedição</h3>
-              <p className={validation.valid ? 'text-green-300' : 'text-amber-300'}>
-                {validation.message}
+          {leaderCard && (
+            <div className="bg-slate-800/60 rounded-xl p-4 mb-6 text-sm text-slate-300">
+              <p>
+                Líder: <span className="text-amber-300 font-semibold">{leaderCard.role ?? leaderCard.function}</span>
+                {leaderCard.region && <> da região <span className="text-amber-300 font-semibold">{leaderCard.region}</span></>}
+              </p>
+              <p className="mt-1 text-slate-400 text-xs">
+                As outras cartas devem ter o mesmo papel ou a mesma região.
               </p>
             </div>
-          </div>
+          )}
 
-          {/* Points Summary */}
-          <div className="bg-slate-800/80 backdrop-blur-xl rounded-lg p-6 mb-6">
-            <h3 className="text-lg font-bold text-white mb-4">Resumo de Pontos</h3>
-            
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-slate-400">Total das cartas</span>
-                <span className="text-2xl font-bold text-white">{totalPoints}</span>
-              </div>
-              
-              {leader && (
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-400">Bônus do líder (×1.5)</span>
-                  <span className="text-2xl font-bold text-amber-500">+{leaderBonus}</span>
-                </div>
-              )}
-              
-              <div className="border-t border-slate-700 pt-3 flex justify-between items-center">
-                <span className="text-lg font-bold text-white">Total</span>
-                <span className="text-3xl font-bold text-green-400">
-                  {totalPoints + leaderBonus}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex gap-4">
-            <Button
-              variant="outline"
-              onClick={cancel}
-              className="flex-1 bg-slate-700 border-slate-600 hover:bg-slate-600"
-            >
-              Cancelar
-            </Button>
-            
-            <Button
-              onClick={confirmExpedition}
-              disabled={!validation.valid}
-              className="flex-1 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <CheckCircle className="w-5 h-5 mr-2" />
-              Confirmar Expedição
-            </Button>
-          </div>
+          <Button
+            onClick={submitExpedition}
+            disabled={leaderPos === null || !allValid || loading}
+            className="w-full bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-lg py-6 disabled:opacity-50"
+          >
+            {loading ? <Loader2 className="w-5 h-5 mr-2 animate-spin" /> : <Crown className="w-5 h-5 mr-2" />}
+            Confirmar Expedição
+          </Button>
         </motion.div>
       </div>
     </div>
-  );
+  )
 }

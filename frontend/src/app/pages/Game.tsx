@@ -1,177 +1,143 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router';
 import { Button } from '../components/ui/button';
 import { GameCard } from '../components/GameCard';
 import { PlayerInfo } from '../components/PlayerInfo';
-import { Player, GameCard as GameCardType, CardColor, CardFunction } from '../types';
+import { Player, GameCard as GameCardType } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { ShoppingCart, Package, Send, AlertCircle, Menu, X, Eye, ChevronDown, ChevronUp, Hand } from 'lucide-react';
+import {
+  ShoppingCart, Package, Send, AlertCircle, Menu, X,
+  Eye, ChevronDown, ChevronUp, Hand, Loader2,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { Toaster } from '../components/ui/sonner';
 import { useGameStore } from '../../store/gameStore';
+import { gameApi } from '../../api/game';
+import { adaptGameState } from '../../api/adapters';
+import { BackendGameState } from '../../api/types';
 
-const monkeyEmojis = {
-  see: '🙈',
-  hear: '🙉',
-  speak: '🙊',
-};
-
-const generateInitialCard = (id: string): GameCardType => {
-  const colors: CardColor[] = ['red', 'blue', 'green', 'yellow', 'purple'];
-  const functions: CardFunction[] = ['excavation', 'transport', 'research', 'funding', 'artifact'];
-  return {
-    id,
-    color: colors[Math.floor(Math.random() * colors.length)],
-    function: functions[Math.floor(Math.random() * functions.length)],
-    value: Math.floor(Math.random() * 5) + 1,
-  };
-};
-
-const generateCard = (id: string, turnCount: number): GameCardType => {
-  const colors: CardColor[] = ['red', 'blue', 'green', 'yellow', 'purple'];
-  const functions: CardFunction[] = ['excavation', 'transport', 'research', 'funding', 'artifact'];
-  const canHaveMonkey = turnCount >= 5;
-  const monkeyChance = canHaveMonkey ? Math.min(0.15, 0.05 + (turnCount - 5) * 0.02) : 0;
-  const isMonkey = Math.random() < monkeyChance;
-
-  if (isMonkey) {
-    const monkeyTypes: Array<'see' | 'hear' | 'speak'> = ['see', 'hear', 'speak'];
-    return { id, color: 'red', function: 'monkey', value: 0, monkeyType: monkeyTypes[Math.floor(Math.random() * monkeyTypes.length)] };
-  }
-
-  return {
-    id,
-    color: colors[Math.floor(Math.random() * colors.length)],
-    function: functions[Math.floor(Math.random() * functions.length)],
-    value: Math.floor(Math.random() * 5) + 1,
-  };
-};
+const POLL_INTERVAL = 3000
 
 export default function Game() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { myPlayerId } = useGameStore();
+  const { gameId: storedGameId, myPlayerId, playerColors } = useGameStore();
 
-  const playersData = location.state?.players || [];
+  const gid = storedGameId ?? location.state?.gameCode ?? null
 
-  useEffect(() => {
-    if (!playersData || playersData.length === 0) navigate('/');
-  }, [playersData, navigate]);
+  const [players, setPlayers] = useState<Player[]>([])
+  const [market, setMarket] = useState<GameCardType[]>([])
+  const [currentPlayerId, setCurrentPlayerId] = useState<string | null>(null)
+  const [season, setSeason] = useState(1)
+  const [monkeysFound, setMonkeysFound] = useState(0)
+  const [status, setStatus] = useState<string>('PLAYING')
+  const [loading, setLoading] = useState(true)
+  const [actionLoading, setActionLoading] = useState(false)
+  const [selectedIndices, setSelectedIndices] = useState<number[]>([])
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [myHandOpen, setMyHandOpen] = useState(false)
 
-  const initializePlayers = (): Player[] => {
-    if (location.state?.players && location.state.players[0]?.score !== undefined) {
-      return location.state.players;
-    }
-    return playersData.map((p: any, i: number) => ({
-      id: `player-${i}`,
-      name: p.name,
-      color: p.color,
-      score: 0,
-      cards: Array.from({ length: 5 }, (_, j) => generateInitialCard(`${i}-${j}`)),
-      position: 0,
-    }));
-  };
-
-  const [players, setPlayers] = useState<Player[]>(initializePlayers());
-  const [currentPlayerIndex, setCurrentPlayerIndex] = useState(location.state?.currentPlayerIndex || 0);
-  const [market, setMarket] = useState<GameCardType[]>(
-    location.state?.market || Array.from({ length: 5 }, (_, i) => generateInitialCard(`market-${i}`))
-  );
-  const [selectedCards, setSelectedCards] = useState<string[]>([]);
-  const [season, setSeason] = useState(location.state?.season || 1);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [revealedMonkeys, setRevealedMonkeys] = useState<GameCardType[]>(location.state?.revealedMonkeys || []);
-  const [turnCount, setTurnCount] = useState(location.state?.turnCount || 0);
-  const [myHandOpen, setMyHandOpen] = useState(false);
+  const statusRef = useRef(status)
+  statusRef.current = status
 
   useEffect(() => {
-    if (location.state?.players && location.state.players[0]?.score !== undefined) setPlayers(location.state.players);
-    if (location.state?.market) setMarket(location.state.market);
-    if (location.state?.currentPlayerIndex !== undefined) setCurrentPlayerIndex(location.state.currentPlayerIndex);
-    if (location.state?.revealedMonkeys) setRevealedMonkeys(location.state.revealedMonkeys);
-    if (location.state?.turnCount !== undefined) setTurnCount(location.state.turnCount);
-  }, [location.state]);
+    if (!gid) { navigate('/'); return }
 
-  const currentPlayer = players[currentPlayerIndex];
+    const fetchState = async () => {
+      try {
+        const res = await gameApi.getState(gid)
+        const raw: BackendGameState = res.data
+        const adapted = adaptGameState(raw, playerColors)
+        setPlayers(adapted.players)
+        setMarket(adapted.market)
+        setCurrentPlayerId(adapted.currentPlayerId)
+        setSeason(adapted.season)
+        setMonkeysFound(adapted.monkeysFound)
+        setStatus(adapted.status)
+        setLoading(false)
 
-  // The player bound to this device. Falls back to currentPlayer in single-device mode.
-  const myPlayer = myPlayerId
-    ? (players.find(p => p.id === myPlayerId) ?? currentPlayer)
-    : currentPlayer;
+        if (adapted.status === 'SEASON_ENDED' && statusRef.current !== 'SEASON_ENDED') {
+          navigate('/season-end', { state: { gameId: gid } })
+        } else if (adapted.status === 'FINISHED' && statusRef.current !== 'FINISHED') {
+          navigate('/game-end', { state: { gameId: gid } })
+        }
+      } catch {
+        // silently retry on network errors
+      }
+    }
 
-  const isMyTurn = !myPlayerId || myPlayer?.id === currentPlayer?.id;
+    fetchState()
+    const interval = setInterval(fetchState, POLL_INTERVAL)
+    return () => clearInterval(interval)
+  }, [gid, navigate, playerColors])
 
-  const MAX_HAND_SIZE = 10;
-
+  // Navigate on status change
   useEffect(() => {
-    if (revealedMonkeys.length >= 3) {
-      toast.error('🙈🙉🙊 3 Macacos revelados! Fim da temporada!', { duration: 3000 });
-      setTimeout(() => navigate('/season-end', { state: { players, season, monkeyEnd: true } }), 2000);
+    if (status === 'SEASON_ENDED') navigate('/season-end', { state: { gameId: gid } })
+    else if (status === 'FINISHED') navigate('/game-end', { state: { gameId: gid } })
+  }, [status, gid, navigate])
+
+  if (!gid) return null
+
+  const myPlayer = myPlayerId ? players.find((p) => p.id === myPlayerId) ?? null : null
+  const currentPlayer = players.find((p) => p.id === currentPlayerId) ?? players[0] ?? null
+  const isMyTurn = !!myPlayerId && myPlayerId === currentPlayerId
+
+  const MAX_HAND_SIZE = 10
+  const myCards = myPlayer?.cards ?? []
+  const selectedCards = selectedIndices.map((i) => myCards[i]).filter(Boolean)
+
+  const toggleCardSelection = (index: number) => {
+    const card = myCards[index]
+    if (!card) return
+    if (card.function === 'monkey') { toast.error('Cartas de macaco não podem ser usadas em expedições!'); return }
+    setSelectedIndices((prev) =>
+      prev.includes(index) ? prev.filter((i) => i !== index) : [...prev, index]
+    )
+  }
+
+  const buyFromMarket = async (marketIndex: number) => {
+    if (!isMyTurn || !myPlayerId || !gid) return
+    if ((myPlayer?.cards.length ?? 0) >= MAX_HAND_SIZE) { toast.error('Limite de cartas atingido! (máx: 10)'); return }
+    setActionLoading(true)
+    try {
+      await gameApi.drawFromMarket(gid, myPlayerId, marketIndex)
+      toast.success('Carta comprada do mercado!')
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail ?? 'Erro ao comprar do mercado')
+    } finally {
+      setActionLoading(false)
     }
-  }, [revealedMonkeys, navigate, players, season]);
+  }
 
-  if (!currentPlayer || !myPlayer) return null;
-
-  // ── Actions (only called when isMyTurn is true) ─────────────────────────
-
-  const buyFromMarket = (card: GameCardType) => {
-    if (myPlayer.cards.length >= MAX_HAND_SIZE) { toast.error('Limite de cartas atingido! (máx: 10)'); return; }
-    if (card.function === 'monkey') {
-      setRevealedMonkeys(prev => [...prev, card]);
-      toast.warning(`Macaco revelado! ${monkeyEmojis[card.monkeyType || 'see']} (${revealedMonkeys.length + 1}/3)`, { duration: 2000 });
+  const buyFromDeck = async () => {
+    if (!isMyTurn || !myPlayerId || !gid) return
+    if ((myPlayer?.cards.length ?? 0) >= MAX_HAND_SIZE) { toast.error('Limite de cartas atingido! (máx: 10)'); return }
+    setActionLoading(true)
+    try {
+      await gameApi.drawFromDeck(gid, myPlayerId)
+      toast.success('Carta comprada do baralho!')
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail ?? 'Erro ao comprar do baralho')
+    } finally {
+      setActionLoading(false)
     }
-    const updated = [...players];
-    updated[currentPlayerIndex].cards.push(card);
-    setPlayers(updated);
-
-    const newMarket = market.filter(c => c.id !== card.id);
-    const newCard = generateCard(`market-${Date.now()}`, turnCount);
-    if (newCard.function === 'monkey') {
-      setTimeout(() => {
-        setRevealedMonkeys(prev => [...prev, newCard]);
-        toast.warning(`Macaco no mercado! ${monkeyEmojis[newCard.monkeyType || 'see']}`, { duration: 2000 });
-      }, 500);
-    }
-    newMarket.push(newCard);
-    setMarket(newMarket);
-    if (card.function !== 'monkey') toast.success('Carta comprada do mercado!');
-    nextTurn();
-  };
-
-  const buyFromDeck = () => {
-    if (myPlayer.cards.length >= MAX_HAND_SIZE) { toast.error('Limite de cartas atingido! (máx: 10)'); return; }
-    const newCard = generateCard(`deck-${Date.now()}`, turnCount);
-    if (newCard.function === 'monkey') {
-      setRevealedMonkeys(prev => [...prev, newCard]);
-      toast.warning(`Macaco comprado! ${monkeyEmojis[newCard.monkeyType || 'see']} (${revealedMonkeys.length + 1}/3)`, { duration: 2000 });
-    }
-    const updated = [...players];
-    updated[currentPlayerIndex].cards.push(newCard);
-    setPlayers(updated);
-    if (newCard.function !== 'monkey') toast.success('Carta comprada do baralho!');
-    nextTurn();
-  };
+  }
 
   const startExpedition = () => {
-    if (selectedCards.length < 2) { toast.error('Selecione ao menos 2 cartas para iniciar uma expedição!'); return; }
-    navigate('/expedition', { state: { players, currentPlayerIndex, selectedCards, season, market, revealedMonkeys, turnCount } });
-  };
+    if (selectedIndices.length < 2) { toast.error('Selecione ao menos 2 cartas!'); return }
+    navigate('/expedition', {
+      state: { gameId: gid, playerId: myPlayerId, selectedIndices, selectedCards },
+    })
+  }
 
-  const toggleCardSelection = (cardId: string) => {
-    const card = myPlayer.cards.find(c => c.id === cardId);
-    if (card?.function === 'monkey') { toast.error('Cartas de macaco não podem ser usadas em expedições!'); return; }
-    setSelectedCards(prev => prev.includes(cardId) ? prev.filter(id => id !== cardId) : [...prev, cardId]);
-  };
-
-  const nextTurn = () => {
-    setSelectedCards([]);
-    const nextIndex = (currentPlayerIndex + 1) % players.length;
-    setCurrentPlayerIndex(nextIndex);
-    setTurnCount(prev => prev + 1);
-    if (nextIndex === 0 && Math.random() > 0.7) navigate('/season-end', { state: { players, season } });
-  };
-
-  // ── Render ───────────────────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center">
+        <Loader2 className="w-10 h-10 text-amber-400 animate-spin" />
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 overflow-hidden">
@@ -182,20 +148,22 @@ export default function Game() {
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div>
             <h1 className="text-xl md:text-2xl font-bold text-white">Archeos Society</h1>
-            <p className="text-sm text-slate-400">Temporada {season}</p>
+            <p className="text-sm text-slate-400">Temporada {season} • Macacos: {monkeysFound}/3</p>
           </div>
           <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setMobileMenuOpen(!mobileMenuOpen)}>
             {mobileMenuOpen ? <X /> : <Menu />}
           </Button>
-          <div className="hidden md:block text-right">
-            <div className="text-sm text-slate-400">Vez de</div>
-            <div className="text-lg font-bold" style={{ color: currentPlayer.color }}>{currentPlayer.name}</div>
-          </div>
+          {currentPlayer && (
+            <div className="hidden md:block text-right">
+              <div className="text-sm text-slate-400">Vez de</div>
+              <div className="text-lg font-bold" style={{ color: currentPlayer.color }}>{currentPlayer.name}</div>
+            </div>
+          )}
         </div>
       </div>
 
       {/* Watching banner */}
-      {!isMyTurn && (
+      {!isMyTurn && myPlayerId && (
         <motion.div
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -204,8 +172,7 @@ export default function Game() {
           <Eye className="w-4 h-4 text-amber-400 flex-shrink-0" />
           <p className="text-amber-300 text-sm">
             Você está observando — é a vez de{' '}
-            <span className="font-bold" style={{ color: currentPlayer.color }}>{currentPlayer.name}</span>.
-            Suas ações ficam disponíveis quando chegar a sua vez.
+            <span className="font-bold" style={{ color: currentPlayer?.color }}>{currentPlayer?.name}</span>.
           </p>
         </motion.div>
       )}
@@ -213,24 +180,24 @@ export default function Game() {
       <div className="flex flex-col md:flex-row h-[calc(100vh-80px)]">
         {/* Sidebar */}
         <AnimatePresence>
-          {(mobileMenuOpen || window.innerWidth >= 768) && (
+          {(mobileMenuOpen || true) && (
             <motion.div
               initial={{ x: -300 }} animate={{ x: 0 }} exit={{ x: -300 }}
-              className="w-full md:w-80 bg-slate-800/50 backdrop-blur-xl border-r border-slate-700 p-4 overflow-y-auto absolute md:relative z-20 h-full"
+              className="hidden md:block w-80 bg-slate-800/50 backdrop-blur-xl border-r border-slate-700 p-4 overflow-y-auto"
             >
               <h2 className="text-lg font-bold text-white mb-4">Jogadores</h2>
               <div className="space-y-3">
-                {players.map((player, index) => (
-                  <PlayerInfo key={player.id} player={player} isActive={index === currentPlayerIndex} />
+                {players.map((player) => (
+                  <PlayerInfo key={player.id} player={player} isActive={player.id === currentPlayerId} />
                 ))}
               </div>
 
               <div className="mt-6">
-                <h3 className="text-lg font-bold text-white mb-4">Trilhas Arqueológicas</h3>
+                <h3 className="text-lg font-bold text-white mb-4">Trilhas</h3>
                 {players.map((player) => (
                   <div key={player.id} className="mb-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <div className="w-4 h-4 rounded-full" style={{ backgroundColor: player.color }} />
+                    <div className="flex items-center gap-2 mb-1">
+                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: player.color }} />
                       <span className="text-sm text-white">{player.name}</span>
                     </div>
                     <div className="flex gap-1">
@@ -244,17 +211,17 @@ export default function Game() {
 
               <div className="mt-6">
                 <h3 className="text-lg font-bold text-white mb-3">Macacos Revelados</h3>
-                <div className={`p-4 rounded-lg ${revealedMonkeys.length >= 3 ? 'bg-red-500/30 border-2 border-red-500' : 'bg-orange-500/20 border border-orange-500'}`}>
-                  <div className="flex items-center justify-center gap-3 mb-3">
-                    {Array.from({ length: 3 }).map((_, i) => (
-                      <div key={i} className={`w-12 h-12 rounded-full flex items-center justify-center text-2xl ${i < revealedMonkeys.length ? 'bg-orange-600' : 'bg-slate-700'}`}>
-                        {i < revealedMonkeys.length && revealedMonkeys[i] ? monkeyEmojis[revealedMonkeys[i].monkeyType || 'see'] : '?'}
+                <div className={`p-4 rounded-lg ${monkeysFound >= 3 ? 'bg-red-500/30 border-2 border-red-500' : 'bg-orange-500/20 border border-orange-500'}`}>
+                  <div className="flex items-center justify-center gap-3 mb-2">
+                    {['🙈', '🙉', '🙊'].map((emoji, i) => (
+                      <div key={i} className={`w-12 h-12 rounded-full flex items-center justify-center text-2xl ${i < monkeysFound ? 'bg-orange-600' : 'bg-slate-700'}`}>
+                        {i < monkeysFound ? emoji : '?'}
                       </div>
                     ))}
                   </div>
-                  <p className="text-center text-sm font-bold text-orange-300">{revealedMonkeys.length}/3 Macacos</p>
-                  {revealedMonkeys.length >= 2 && revealedMonkeys.length < 3 && (
-                    <p className="text-center text-xs text-orange-200 mt-2">⚠️ Próximo macaco encerra a temporada!</p>
+                  <p className="text-center text-sm font-bold text-orange-300">{monkeysFound}/3 Macacos</p>
+                  {monkeysFound >= 2 && monkeysFound < 3 && (
+                    <p className="text-center text-xs text-orange-200 mt-1">⚠️ Próximo macaco encerra a temporada!</p>
                   )}
                 </div>
               </div>
@@ -265,29 +232,29 @@ export default function Game() {
         {/* Main area */}
         <div className="flex-1 overflow-y-auto p-4 md:p-6">
 
-          {/* Market — always visible, only clickable on your turn */}
+          {/* Market */}
           <div className="mb-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold text-white flex items-center gap-2">
                 <ShoppingCart className="w-5 h-5 text-blue-400" />
-                Mercado de Cartas
+                Mercado
               </h2>
               <Button
-                onClick={isMyTurn ? buyFromDeck : undefined}
-                disabled={!isMyTurn}
+                onClick={buyFromDeck}
+                disabled={!isMyTurn || actionLoading}
                 variant="outline"
-                className="bg-purple-500/20 border-purple-500 hover:bg-purple-500/30 disabled:opacity-40 disabled:cursor-not-allowed"
+                className="bg-purple-500/20 border-purple-500 hover:bg-purple-500/30 disabled:opacity-40"
               >
-                <Package className="w-4 h-4 mr-2" />
+                {actionLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Package className="w-4 h-4 mr-2" />}
                 Comprar do Baralho
               </Button>
             </div>
             <div className={`flex gap-3 overflow-x-auto pb-4 ${!isMyTurn ? 'opacity-80' : ''}`}>
-              {market.map((card) => (
+              {market.map((card, idx) => (
                 <div
                   key={card.id}
-                  onClick={isMyTurn ? () => buyFromMarket(card) : undefined}
-                  className={!isMyTurn ? 'cursor-default' : 'cursor-pointer'}
+                  onClick={isMyTurn && !actionLoading ? () => buyFromMarket(idx) : undefined}
+                  className={isMyTurn && !actionLoading ? 'cursor-pointer' : 'cursor-default'}
                 >
                   <GameCard card={card} />
                 </div>
@@ -295,69 +262,66 @@ export default function Game() {
             </div>
           </div>
 
-          {/* Hand section */}
+          {/* Hand area */}
           {isMyTurn ? (
-            /* My turn — show my interactive hand */
             <div className="mb-6">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-xl font-bold text-white">
                   Sua Mão
-                  <span className={`ml-2 text-sm ${myPlayer.cards.length >= MAX_HAND_SIZE ? 'text-red-400' : 'text-slate-400'}`}>
-                    ({myPlayer.cards.length}/{MAX_HAND_SIZE})
+                  <span className={`ml-2 text-sm ${myCards.length >= MAX_HAND_SIZE ? 'text-red-400' : 'text-slate-400'}`}>
+                    ({myCards.length}/{MAX_HAND_SIZE})
                   </span>
                 </h2>
                 <Button
                   onClick={startExpedition}
-                  disabled={selectedCards.length < 2}
+                  disabled={selectedIndices.length < 2}
                   className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 disabled:opacity-50"
                 >
                   <Send className="w-4 h-4 mr-2" />
-                  Iniciar Expedição ({selectedCards.length})
+                  Expedição ({selectedIndices.length})
                 </Button>
               </div>
 
-              {myPlayer.cards.length >= MAX_HAND_SIZE && (
+              {myCards.length >= MAX_HAND_SIZE && (
                 <div className="bg-red-500/20 border border-red-500 rounded-lg p-3 mb-4 flex items-center gap-2">
                   <AlertCircle className="w-5 h-5 text-red-400" />
-                  <p className="text-red-300 text-sm">Limite de cartas atingido! Faça uma expedição antes de comprar mais.</p>
+                  <p className="text-red-300 text-sm">Limite atingido! Faça uma expedição antes de comprar mais.</p>
                 </div>
               )}
 
               <div className="flex gap-3 overflow-x-auto pb-4">
-                {myPlayer.cards.map((card) => (
-                  <div key={card.id} onClick={() => toggleCardSelection(card.id)} className="cursor-pointer">
-                    <GameCard card={card} selected={selectedCards.includes(card.id)} />
+                {myCards.map((card, idx) => (
+                  <div key={card.id} onClick={() => toggleCardSelection(idx)} className="cursor-pointer">
+                    <GameCard card={card} selected={selectedIndices.includes(idx)} />
                   </div>
                 ))}
               </div>
             </div>
           ) : (
-            /* Watching — show only card count for the active player, hand hidden */
             <div className="mb-6">
               <div className="flex items-center gap-3 p-4 bg-slate-800/60 rounded-xl border border-slate-700">
                 <Hand className="w-5 h-5 text-slate-400 flex-shrink-0" />
                 <p className="text-slate-400 text-sm">
-                  <span className="font-semibold" style={{ color: currentPlayer.color }}>{currentPlayer.name}</span>
-                  {' '}tem <span className="text-white font-bold">{currentPlayer.cards.length}</span> carta(s) na mão.
+                  <span className="font-semibold" style={{ color: currentPlayer?.color }}>{currentPlayer?.name}</span>
+                  {' '}tem <span className="text-white font-bold">{currentPlayer?.cards.length ?? 0}</span> carta(s) na mão.
                 </p>
               </div>
             </div>
           )}
 
-          {/* My hand (collapsible) — only shown when watching someone else */}
-          {!isMyTurn && myPlayer.id !== currentPlayer.id && (
+          {/* My hand collapsible when watching */}
+          {!isMyTurn && myPlayer && myPlayer.id !== currentPlayerId && (
             <div className="border border-slate-700 rounded-xl overflow-hidden">
               <button
-                onClick={() => setMyHandOpen(o => !o)}
+                onClick={() => setMyHandOpen((o) => !o)}
                 className="w-full flex items-center justify-between p-4 bg-slate-800/60 hover:bg-slate-800 transition-colors text-left"
               >
                 <span className="text-white font-semibold">
                   Minha Mão
-                  <span className="ml-2 text-slate-400 text-sm font-normal">({myPlayer.cards.length}/{MAX_HAND_SIZE})</span>
+                  <span className="ml-2 text-slate-400 text-sm font-normal">({myCards.length}/{MAX_HAND_SIZE})</span>
                 </span>
                 {myHandOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
               </button>
-
               <AnimatePresence>
                 {myHandOpen && (
                   <motion.div
@@ -367,15 +331,14 @@ export default function Game() {
                     className="overflow-hidden"
                   >
                     <div className="flex gap-3 overflow-x-auto p-4 bg-slate-900/40">
-                      {myPlayer.cards.length === 0 ? (
-                        <p className="text-slate-500 text-sm">Sua mão está vazia.</p>
-                      ) : (
-                        myPlayer.cards.map((card) => (
+                      {myCards.length === 0
+                        ? <p className="text-slate-500 text-sm">Sua mão está vazia.</p>
+                        : myCards.map((card) => (
                           <div key={card.id} className="cursor-default">
                             <GameCard card={card} />
                           </div>
                         ))
-                      )}
+                      }
                     </div>
                   </motion.div>
                 )}
