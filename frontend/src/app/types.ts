@@ -6,7 +6,9 @@ export interface GameCard {
   color: CardColor;
   function: CardFunction;
   value: number;
-  monkeyType?: 'see' | 'hear' | 'speak'; // Para os três macacos sábios
+  role?: string;
+  region?: string;
+  monkeyType?: 'see' | 'hear' | 'speak';
 }
 
 export interface Player {
@@ -15,7 +17,8 @@ export interface Player {
   color: string;
   score: number;
   cards: GameCard[];
-  position: number; // posição na trilha
+  position: number;
+  tracks?: Record<string, number>;
 }
 
 export interface Role {

@@ -1,24 +1,32 @@
 import api from './client'
 
 export const gameApi = {
-  createGame: (payload: { players: { name: string; role: string }[]; sites: string[] }) =>
-    api.post('/game/create', payload),
+  createGame: (payload: {
+    player_ids: string[]
+    selected_roles?: string[]
+    site_configs?: Record<string, 'A' | 'B'>
+  }) => api.post('/game/create', payload),
 
-  getState: (gameId: string) =>
-    api.get(`/game/${gameId}`),
+  getState: (gameId: string) => api.get(`/game/${gameId}`),
 
-  buyFromMarket: (gameId: string, cardId: string) =>
-    api.post(`/game/${gameId}/buy-market`, { card_id: cardId }),
+  getSummary: (gameId: string) => api.get(`/game/${gameId}/summary`),
 
-  buyFromDeck: (gameId: string) =>
-    api.post(`/game/${gameId}/buy-deck`),
+  drawFromMarket: (gameId: string, playerId: string, marketIndex: number) =>
+    api.post(`/game/${gameId}/draw/market`, { player_id: playerId, market_index: marketIndex }),
 
-  playExpedition: (gameId: string, cardIds: string[], leaderId: string) =>
-    api.post(`/game/${gameId}/expedition`, { card_ids: cardIds, leader_id: leaderId }),
+  drawFromDeck: (gameId: string, playerId: string) =>
+    api.post(`/game/${gameId}/draw/deck`, { player_id: playerId }),
 
-  endTurn: (gameId: string) =>
-    api.post(`/game/${gameId}/end-turn`),
+  playExpedition: (
+    gameId: string,
+    payload: {
+      player_id: string
+      card_indices: number[]
+      leader_index: number
+      target_track?: string
+      choose_to_score?: boolean
+    },
+  ) => api.post(`/game/${gameId}/play-expedition`, payload),
 
-  endSeason: (gameId: string) =>
-    api.post(`/game/${gameId}/end-season`),
+  nextSeason: (gameId: string) => api.post(`/game/${gameId}/ready`),
 }

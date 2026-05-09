@@ -1,69 +1,32 @@
 import { create } from 'zustand'
 
-export type CardColor = 'red' | 'blue' | 'green' | 'yellow' | 'purple'
-export type CardFunction = 'excavation' | 'transport' | 'research' | 'funding' | 'artifact' | 'monkey'
-
-export interface GameCard {
-  id: string
-  color: CardColor
-  function: CardFunction
-  value: number
-  monkeyType?: 'see' | 'hear' | 'speak'
-}
-
-export interface Player {
-  id: string
-  name: string
-  color: string
-  role: string
-  score: number
-  position: number
-  cards: GameCard[]
-}
-
-export interface GameState {
+export interface GameStore {
   gameId: string | null
   myPlayerId: string | null
-  players: Player[]
-  currentPlayerIndex: number
-  market: GameCard[]
-  season: number
-  revealedMonkeys: number
-  phase: 'lobby' | 'setup' | 'playing' | 'expedition' | 'season-end' | 'game-end'
-  selectedCards: GameCard[]
-  sites: string[]
+  playerColors: Record<string, string>
 
   setGameId: (id: string) => void
   setMyPlayerId: (id: string | null) => void
-  setPlayers: (players: Player[]) => void
-  setMarket: (market: GameCard[]) => void
-  setCurrentPlayer: (index: number) => void
-  setSeason: (season: number) => void
-  setRevealedMonkeys: (count: number) => void
-  setPhase: (phase: GameState['phase']) => void
-  setSelectedCards: (cards: GameCard[]) => void
-  setSites: (sites: string[]) => void
+  setPlayerColors: (colors: Record<string, string>) => void
   reset: () => void
 }
 
-const PLAYER_ID_KEY = 'archeos_myPlayerId'
 const GAME_ID_KEY = 'archeos_gameId'
+const PLAYER_ID_KEY = 'archeos_myPlayerId'
+const PLAYER_COLORS_KEY = 'archeos_playerColors'
 
-const initialState = {
-  gameId: localStorage.getItem(GAME_ID_KEY) ?? null,
-  myPlayerId: localStorage.getItem(PLAYER_ID_KEY) ?? null,
-  players: [],
-  currentPlayerIndex: 0,
-  market: [],
-  season: 1,
-  revealedMonkeys: 0,
-  phase: 'lobby' as const,
-  selectedCards: [],
-  sites: [],
+function loadPlayerColors(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(PLAYER_COLORS_KEY) ?? '{}')
+  } catch {
+    return {}
+  }
 }
 
-export const useGameStore = create<GameState>((set) => ({
-  ...initialState,
+export const useGameStore = create<GameStore>((set) => ({
+  gameId: localStorage.getItem(GAME_ID_KEY) ?? null,
+  myPlayerId: localStorage.getItem(PLAYER_ID_KEY) ?? null,
+  playerColors: loadPlayerColors(),
 
   setGameId: (id) => {
     localStorage.setItem(GAME_ID_KEY, id)
@@ -74,17 +37,14 @@ export const useGameStore = create<GameState>((set) => ({
     else localStorage.removeItem(PLAYER_ID_KEY)
     set({ myPlayerId: id })
   },
-  setPlayers: (players) => set({ players }),
-  setMarket: (market) => set({ market }),
-  setCurrentPlayer: (index) => set({ currentPlayerIndex: index }),
-  setSeason: (season) => set({ season }),
-  setRevealedMonkeys: (count) => set({ revealedMonkeys: count }),
-  setPhase: (phase) => set({ phase }),
-  setSelectedCards: (cards) => set({ selectedCards: cards }),
-  setSites: (sites) => set({ sites }),
+  setPlayerColors: (colors) => {
+    localStorage.setItem(PLAYER_COLORS_KEY, JSON.stringify(colors))
+    set({ playerColors: colors })
+  },
   reset: () => {
-    localStorage.removeItem(PLAYER_ID_KEY)
     localStorage.removeItem(GAME_ID_KEY)
-    set({ ...initialState, gameId: null, myPlayerId: null })
+    localStorage.removeItem(PLAYER_ID_KEY)
+    localStorage.removeItem(PLAYER_COLORS_KEY)
+    set({ gameId: null, myPlayerId: null, playerColors: {} })
   },
 }))
