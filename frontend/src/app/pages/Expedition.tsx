@@ -20,6 +20,22 @@ export default function Expedition() {
   }
   const { gameId, playerId, selectedIndices, selectedCards } = state
 
+  const LEADER_ABILITIES: Record<string, string> = {
+    'Guia':       'Sempre avança na trilha da região, independente do tamanho da expedição.',
+    'Linguista':  'Avança na trilha do Linguista. O jogador com mais avanços ganha +2 pontos no fim da temporada.',
+    'Professor':  'Escolha qualquer trilha para avançar. Acumula tokens — maior soma avança, menor recua no fim da temporada.',
+    'Piloto':     'Escolha qualquer trilha para avançar.',
+    'Estudante':  'Não avança na trilha de nenhuma região.',
+    'Médico':     'Mantém todas as cartas na mão após a expedição (não descarta).',
+    'Cartógrafo': 'Mantém as cartas na mão e ganha um turno extra se ainda tiver cartas.',
+    'Patrono':    'Compra N cartas do baralho, onde N é o tamanho da expedição.',
+    'Botânico':   'A próxima carta comprada do baralho vai para a sua mão.',
+    'Curador':    'Ganha 1 relíquia. Relíquias valem pontos progressivos no fim da temporada.',
+    'Fotógrafo':  'Conta +1 no tamanho efetivo da expedição para pontuação e avanço de trilha.',
+    'Explorador': 'Avança na trilha da região se o tamanho da expedição superar sua posição atual.',
+    'Mercenário': 'Coringa — pode entrar em qualquer expedição, mas não pode ser líder.',
+  }
+
   const [leaderPos, setLeaderPos] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -123,7 +139,13 @@ export default function Expedition() {
                 Líder: <span className="text-amber-300 font-semibold">{leaderCard.role ?? leaderCard.function}</span>
                 {leaderCard.region && <> da região <span className="text-amber-300 font-semibold">{leaderCard.region}</span></>}
               </p>
-              <p className="mt-1 text-slate-400 text-xs">
+              {leaderCard.role && LEADER_ABILITIES[leaderCard.role] && (
+                <div className="mt-2 flex items-start gap-2 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">
+                  <Crown className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
+                  <p className="text-amber-200 text-xs">{LEADER_ABILITIES[leaderCard.role]}</p>
+                </div>
+              )}
+              <p className="mt-2 text-slate-400 text-xs">
                 As outras cartas devem ter o mesmo papel ou a mesma região.
               </p>
             </div>
