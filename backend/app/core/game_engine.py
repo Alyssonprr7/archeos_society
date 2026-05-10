@@ -73,11 +73,10 @@ def create_game(
             color_assigned=colors[i]
         )
         
-    card_values_cycle = [1, 1, 2, 2, 3, 3]
     for role in selected_roles:
-        colors = [c for c in CardColor if c != CardColor.SPECIAL]
-        for i, color in enumerate(colors):
-            session.deck.append(Card(role=role, color=color.value, value=card_values_cycle[i]))
+        for color in CardColor:
+            if color != CardColor.SPECIAL:
+                session.deck.append(Card(role=role, color=color.value))
                 
     random.shuffle(session.deck)
     start_season_setup(session)

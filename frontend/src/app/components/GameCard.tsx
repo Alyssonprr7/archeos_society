@@ -77,9 +77,10 @@ export function GameCard({ card, selected, onClick, disabled }: GameCardProps) {
             {Icon && <Icon className="w-4 h-4 md:w-5 md:h-5 text-white" />}
           </div>
           
-          {/* Value */}
-          <div className="absolute bottom-0 left-0 right-0 bg-black/40 backdrop-blur-sm p-2 text-center">
-            <span className="text-2xl md:text-3xl font-bold text-white">{card.value}</span>
+          {/* Role + Region */}
+          <div className="absolute bottom-0 left-0 right-0 bg-black/40 backdrop-blur-sm px-2 py-1.5 text-center">
+            <p className="text-xs font-bold text-white leading-tight truncate">{card.role ?? '—'}</p>
+            <p className="text-[10px] text-white/70 leading-tight truncate">{card.region ?? '—'}</p>
           </div>
         </>
       )}
