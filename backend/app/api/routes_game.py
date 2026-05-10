@@ -89,8 +89,9 @@ async def api_play_expedition(
         save_game_state(db, session)
         
         return {
-            "message": "Expedição jogada com sucesso", 
+            "message": "Expedição jogada com sucesso",
             "expedition_size": len(expedition.cards),
+            "points_earned": player.score,
             "next_turn": session.current_turn_player_id
         }
     except ValueError as e:
