@@ -7,7 +7,7 @@ const REGION_TO_COLOR: Record<string, CardColor> = {
   'Europa': 'blue',
   'África': 'yellow',
   'Ásia': 'purple',
-  'Oceania': 'red',
+  'Oceania': 'orange',
   'Especial': 'red',
 }
 

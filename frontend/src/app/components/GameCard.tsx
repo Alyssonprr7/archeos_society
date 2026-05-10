@@ -15,6 +15,7 @@ const colorMap = {
   green: 'bg-gradient-to-br from-green-500 to-green-700',
   yellow: 'bg-gradient-to-br from-yellow-500 to-yellow-700',
   purple: 'bg-gradient-to-br from-purple-500 to-purple-700',
+  orange: 'bg-gradient-to-br from-orange-500 to-orange-700',
 };
 
 const functionIcons = {

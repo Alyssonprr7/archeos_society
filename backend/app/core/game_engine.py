@@ -175,6 +175,7 @@ def play_expedition(
             
     expedition = Expedition(cards=cards.copy(), leader=leader, color_matched=color_match)
     player.expeditions_played.append(expedition)
+    player.score += calculate_points(get_expedition_effective_size(expedition))
     return expedition
 
 def advance_turn(session: GameSession):
@@ -192,14 +193,8 @@ def validate_player_turn(session: GameSession, player_id: str):
 def end_season(session: GameSession) -> dict:
     """Finaliza a temporada e aplica efeitos oficiais (RF34, RF36, RF38)"""
     
-    # 1. PONTUAÇÃO DE EXPEDIÇÕES (Incluindo bônus do Fotógrafo) 
+    # 1. PONTUAÇÃO DE RELÍQUIAS (expedições já pontuam em tempo real ao serem jogadas)
     for player in session.players.values():
-        for expedition in player.expeditions_played:
-            # RF36: Aplica o tamanho efetivo (considerando +1 do Fotógrafo) 
-            tamanho_pontuavel = get_expedition_effective_size(expedition)
-            player.score += calculate_points(tamanho_pontuavel)
-        
-        # RF41/Manual: Aplica a pontuação progressiva das Relíquias (Curador) 
         player.score += calculate_relic_score(player.relics)
 
     # 2. LINGUISTA: +2 pontos apenas para o líder

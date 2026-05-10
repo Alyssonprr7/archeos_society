@@ -1,4 +1,4 @@
-export type CardColor = 'red' | 'blue' | 'green' | 'yellow' | 'purple';
+export type CardColor = 'red' | 'blue' | 'green' | 'yellow' | 'purple' | 'orange';
 export type CardFunction = 'excavation' | 'transport' | 'research' | 'funding' | 'artifact' | 'monkey';
 
 export interface GameCard {
