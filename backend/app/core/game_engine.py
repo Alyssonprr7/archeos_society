@@ -75,7 +75,7 @@ def create_game(
         
     for role in selected_roles:
         for color in CardColor:
-            if color != CardColor.SPECIAL: 
+            if color != CardColor.SPECIAL:
                 session.deck.append(Card(role=role, color=color.value))
                 
     random.shuffle(session.deck)
@@ -122,7 +122,7 @@ def play_expedition(
     cartas_normais = [card for card in cards if card.role != "Mercenário"]
     color_match = all(card.color == leader.color for card in cartas_normais)
     role_match = all(card.role == leader.role for card in cartas_normais)
-    
+
     if not (color_match or role_match):
         raise ValueError("As cartas não compartilham a mesma cor ou função.")
         
@@ -347,7 +347,15 @@ def draw_from_market(session: GameSession, player_id: str, market_index: int):
     # Remove do mercado e adiciona à mão
     card = session.market.pop(market_index)
     player.hand.append(card)
-    
+
+    # Repõe o mercado com uma carta do deck
+    if session.deck:
+        drawn = session.deck.pop(0)
+        if drawn.is_monkey:
+            check_monkey_condition(session, drawn)
+        else:
+            session.market.append(drawn)
+
     # Passa o turno automaticamente após a compra (RF10)
     advance_turn(session)
 

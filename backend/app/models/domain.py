@@ -39,6 +39,7 @@ class Card(BaseModel):
     role: str
     color: str
     is_monkey: bool = False
+    value: int = 1
 
 class Expedition(BaseModel):
     cards: List[Card]

@@ -2,6 +2,7 @@ export interface BackendCard {
   role: string
   color: string
   is_monkey: boolean
+  value: number
 }
 
 export interface BackendExpedition {

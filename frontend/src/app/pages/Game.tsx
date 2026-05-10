@@ -101,8 +101,12 @@ export default function Game() {
     if ((myPlayer?.cards.length ?? 0) >= MAX_HAND_SIZE) { toast.error('Limite de cartas atingido! (máx: 10)'); return }
     setActionLoading(true)
     try {
-      await gameApi.drawFromMarket(gid, myPlayerId, marketIndex)
-      toast.success('Carta comprada do mercado!')
+      const res = await gameApi.drawFromMarket(gid, myPlayerId, marketIndex)
+      if (res.data?.monkey_revealed) {
+        toast.error(res.data.message, { icon: '🐒' })
+      } else {
+        toast.success('Carta comprada do mercado!')
+      }
     } catch (err: any) {
       toast.error(err?.response?.data?.detail ?? 'Erro ao comprar do mercado')
     } finally {
@@ -115,8 +119,12 @@ export default function Game() {
     if ((myPlayer?.cards.length ?? 0) >= MAX_HAND_SIZE) { toast.error('Limite de cartas atingido! (máx: 10)'); return }
     setActionLoading(true)
     try {
-      await gameApi.drawFromDeck(gid, myPlayerId)
-      toast.success('Carta comprada do baralho!')
+      const res = await gameApi.drawFromDeck(gid, myPlayerId)
+      if (res.data?.monkey_revealed) {
+        toast.error(res.data.message, { icon: '🐒' })
+      } else {
+        toast.success('Carta comprada do baralho!')
+      }
     } catch (err: any) {
       toast.error(err?.response?.data?.detail ?? 'Erro ao comprar do baralho')
     } finally {

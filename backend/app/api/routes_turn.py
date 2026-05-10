@@ -30,14 +30,29 @@ async def api_draw_market(game_id: str, request: DrawMarketRequest, db: Session 
     
     try:
         validate_player_turn(session, request.player_id)
+        monkeys_before = session.monkeys_found
         draw_from_market(session, request.player_id, request.market_index)
-        
-        # Salva as mudanças no banco de dados!
         save_game_state(db, session)
-        
+
+        if session.status in ["SEASON_ENDED", "FINISHED"]:
+            return {
+                "message": "O 3º macaco foi revelado! A temporada acabou.",
+                "game_status": session.status,
+                "monkey_revealed": True,
+                "monkeys_found": session.monkeys_found,
+            }
+
+        if session.monkeys_found > monkeys_before:
+            return {
+                "message": f"Macaco revelado! ({session.monkeys_found}/3)",
+                "monkey_revealed": True,
+                "monkeys_found": session.monkeys_found,
+                "next_turn": session.current_turn_player_id,
+            }
+
         return {
             "message": "Carta comprada do mercado com sucesso.",
-            "next_turn": session.current_turn_player_id
+            "next_turn": session.current_turn_player_id,
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -52,20 +67,29 @@ async def api_draw_deck(game_id: str, request: DrawDeckRequest, db: Session = De
         raise HTTPException(status_code=400, detail="Ação não permitida.")
 
     try:
-        drawn_card = draw_card_from_deck(session, request.player_id)
+        monkeys_before = session.monkeys_found
+        draw_card_from_deck(session, request.player_id)
         save_game_state(db, session)
-        
-        # Se o jogo mudou de status após a compra (revelou o 3º macaco)
+
         if session.status in ["SEASON_ENDED", "FINISHED"]:
             return {
-                "message": "Atenção: O 3º macaco foi revelado! A temporada acabou.",
+                "message": "O 3º macaco foi revelado! A temporada acabou.",
                 "game_status": session.status,
-                "monkeys_found": session.monkeys_found
+                "monkey_revealed": True,
+                "monkeys_found": session.monkeys_found,
             }
-        
+
+        if session.monkeys_found > monkeys_before:
+            return {
+                "message": f"Macaco revelado! ({session.monkeys_found}/3) — Uma nova carta foi comprada.",
+                "monkey_revealed": True,
+                "monkeys_found": session.monkeys_found,
+                "next_turn": session.current_turn_player_id,
+            }
+
         return {
             "message": "Carta comprada do baralho oculto com sucesso.",
-            "next_turn": session.current_turn_player_id
+            "next_turn": session.current_turn_player_id,
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

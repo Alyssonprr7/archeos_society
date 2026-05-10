@@ -35,7 +35,7 @@ export function adaptCard(card: BackendCard, index: number): GameCard {
     id: `card-${index}-${card.role}-${card.color}`,
     color: REGION_TO_COLOR[card.color] ?? 'red',
     function: card.is_monkey ? 'monkey' : (ROLE_TO_FUNCTION[card.role] ?? 'excavation'),
-    value: 1,
+    value: card.value,
     role: card.role,
     region: card.color,
   }
